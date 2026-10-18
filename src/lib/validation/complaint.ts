@@ -7,7 +7,21 @@
  */
 
 import { z } from "zod";
-import { ComplaintCategoryEnum } from "@/lib/ai/schema";
+
+export const ComplaintCategoryEnum = z.enum([
+  "road_damage",
+  "footpath_damage",
+  "garbage",
+  "waste_collection",
+  "water_leakage",
+  "blocked_drain",
+  "streetlight",
+  "electrical_hazard",
+  "other",
+  "unknown",
+]);
+
+export type ComplaintCategory = z.infer<typeof ComplaintCategoryEnum>;
 
 // Form validation schema for AI-assisted complaint
 export const aiComplaintSchema = z.object({
@@ -71,29 +85,13 @@ export const contactFormSchema = z.object({
 });
 
 export type ContactFormValues = z.infer<typeof contactFormSchema>;
+
+/**
  * PRD-02 :: Zod Input Validation Schemas.
  * Server-side validation for all write and read query endpoints.
  * Strict schemas reject unexpected privileged fields.
  * All comments use Roman English or Roman Urdu.
  */
-
-import { z } from "zod";
-
-// ----------------------------------------------------------------------------
-// Enums matching database constraints
-// ----------------------------------------------------------------------------
-export const ComplaintCategoryEnum = z.enum([
-  "road_damage",
-  "footpath_damage",
-  "garbage",
-  "waste_collection",
-  "water_leakage",
-  "blocked_drain",
-  "streetlight",
-  "electrical_hazard",
-  "other",
-  "unknown",
-]);
 
 export const ComplaintStatusEnum = z.enum([
   "submitted",

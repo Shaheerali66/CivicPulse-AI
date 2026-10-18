@@ -48,16 +48,21 @@ export async function requireAuth() {
 // Get user profile with role and department information
 // ---------------------------------------------------------------------------
 export async function getProfile(userId: string): Promise<DbProfile | null> {
-  const supabase = await createSupabaseServerClient();
+  try {
+    const supabase = await createSupabaseServerClient();
 
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("user_id", userId)
-    .single();
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", userId)   // profiles PK is "id", not "user_id"
+      .single();
 
-  if (error || !data) return null;
-  return data as DbProfile;
+    if (error || !data) return null;
+    return data as DbProfile;
+  } catch (err) {
+    console.error("[CivicPulse Auth] getProfile error:", err);
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------

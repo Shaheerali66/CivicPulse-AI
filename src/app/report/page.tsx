@@ -1,93 +1,202 @@
 import React from "react";
 import Link from "next/link";
-import { Sparkles, Edit3, ArrowRight, ShieldCheck, CheckCircle2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import {
+  Sparkles,
+  FileText,
+  ArrowRight,
+  ArrowLeft,
+  CheckCircle2,
+  ShieldCheck,
+  Building2,
+  Search,
+  Clock,
+  HelpCircle
+} from "lucide-react";
 
 export default function ReportHubPage() {
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 py-12">
-      <div className="mb-8">
-        <h1 className="text-2xl sm:text-3xl font-bold text-[#0A2540]">
-          File a Civic Complaint
-        </h1>
-        <p className="mt-2 text-sm sm:text-base text-[#475569]">
-          Choose the reporting method that best fits your preference. Both methods create an official complaint in our system and generate a verified tracking ID.
-        </p>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* AI Assisted Card */}
-        <div className="bg-white border-2 border-[#CBD5E1] hover:border-[#0F3F6E] transition-colors duration-200 p-6 rounded flex flex-col justify-between">
-          <div>
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-[#F1F5F9] text-[#0F3F6E] font-semibold text-xs rounded mb-4">
-              <Sparkles className="w-3.5 h-3.5 text-[#0F3F6E]" />
-              Recommended for fast reporting
+    <div className="min-h-screen bg-slate-50 text-slate-900">
+      {/* Top Navigation Bar */}
+      <header className="border-b border-slate-200 bg-white sticky top-0 z-40">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
+          <Link href="/" className="inline-flex items-center gap-2 text-slate-900 font-bold hover:text-blue-900 transition-colors">
+            <div className="w-8 h-8 rounded-lg bg-blue-900 text-white flex items-center justify-center font-bold text-xs">
+              CP
             </div>
-            <h2 className="text-lg font-bold text-[#0A2540] mb-2">
-              AI-Assisted Report
-            </h2>
-            <p className="text-sm text-[#475569] mb-4 leading-relaxed">
-              Describe the issue in your own words (Roman Urdu or English). Our civic AI model will extract key details, summarize the issue, and suggest the responsible municipal department.
-            </p>
-            <ul className="text-xs text-[#64748B] space-y-2 mb-6">
-              <li className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-[#0D7A57]" />
-                Auto-summarizes and assigns severity
-              </li>
-              <li className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-[#0D7A57]" />
-                Optional photo and GPS attachment
-              </li>
-              <li className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-[#0D7A57]" />
-                Human review safeguard for safety concerns
-              </li>
-            </ul>
+            <div>
+              <span className="block text-sm font-bold leading-tight">CivicPulse AI</span>
+              <span className="block text-[11px] font-medium text-slate-500 leading-tight">Hyderabad Municipal Portal</span>
+            </div>
+          </Link>
+          <div className="flex items-center gap-4 text-xs font-semibold">
+            <Link href="/track" className="text-slate-600 hover:text-blue-900 inline-flex items-center gap-1.5 transition-colors">
+              <Search className="w-3.5 h-3.5" />
+              Track Complaint
+            </Link>
+            <Link href="/auth/login" className="text-blue-900 hover:text-blue-700 inline-flex items-center gap-1.5 transition-colors">
+              <ShieldCheck className="w-3.5 h-3.5" />
+              Officer Login
+            </Link>
           </div>
-          <Link href="/report/ai">
-            <Button variant="primary" size="lg" className="w-full">
-              Start with AI Assistance
-              <ArrowRight className="w-4 h-4 ml-2" />
-            </Button>
+        </div>
+      </header>
+
+      {/* Main Container */}
+      <main className="max-w-5xl mx-auto px-4 sm:px-6 py-12">
+        {/* Breadcrumb / Back Link */}
+        <div className="mb-6">
+          <Link
+            href="/"
+            className="inline-flex items-center text-xs font-semibold text-slate-500 hover:text-blue-900 transition-colors"
+          >
+            <ArrowLeft className="w-3.5 h-3.5 mr-1.5" />
+            Back to Public Portal
           </Link>
         </div>
 
-        {/* Manual Card */}
-        <div className="bg-white border-2 border-[#CBD5E1] hover:border-[#0F3F6E] transition-colors duration-200 p-6 rounded flex flex-col justify-between">
-          <div>
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-[#F8FAFC] text-[#475569] font-semibold text-xs rounded border border-[#E2E8F0] mb-4">
-              <Edit3 className="w-3.5 h-3.5" />
-              Standard manual form
-            </div>
-            <h2 className="text-lg font-bold text-[#0A2540] mb-2">
-              Manual Form
-            </h2>
-            <p className="text-sm text-[#475569] mb-4 leading-relaxed">
-              Prefer to choose your own category directly? Select from standard civic classifications without running AI model queries. Fully functional even during offline or degraded AI connectivity.
-            </p>
-            <ul className="text-xs text-[#64748B] space-y-2 mb-6">
-              <li className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-[#0D7A57]" />
-                Select from official categories
-              </li>
-              <li className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-[#0D7A57]" />
-                Zero dependency on external AI providers
-              </li>
-              <li className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-[#0D7A57]" />
-                Generates identical verified tracking code
-              </li>
-            </ul>
+        {/* Page Header */}
+        <div className="mb-10 text-center max-w-2xl mx-auto">
+          <div className="inline-flex items-center gap-2 px-3 py-1 bg-blue-50 border border-blue-200 text-blue-900 rounded-full text-xs font-semibold mb-4">
+            <Building2 className="w-3.5 h-3.5" />
+            Official Grievance Registration · Government of Sindh
           </div>
-          <Link href="/report/manual">
-            <Button variant="outline" size="lg" className="w-full">
-              Use Manual Form
-              <ArrowRight className="w-4 h-4 ml-2" />
-            </Button>
+          <h1 className="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
+            File a Civic Complaint
+          </h1>
+          <p className="mt-3 text-slate-600 text-sm sm:text-base leading-relaxed">
+            Select your preferred submission method below. Both options register directly with the relevant Hyderabad municipal authority and generate a verified tracking number.
+          </p>
+        </div>
+
+        {/* Dual Option Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-stretch">
+          {/* Card 1: AI-Assisted Report (Primary) */}
+          <div className="bg-white border-2 border-blue-900 rounded-xl p-6 sm:p-8 shadow-md flex flex-col justify-between relative hover:shadow-lg transition-shadow">
+            <div className="absolute -top-3 right-6 bg-blue-900 text-white text-[11px] font-bold uppercase tracking-wider px-3 py-0.5 rounded-full shadow-sm">
+              Recommended
+            </div>
+            <div>
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-50 text-blue-900 font-semibold text-xs rounded-full border border-blue-200 mb-5">
+                <Sparkles className="w-3.5 h-3.5 text-blue-700" />
+                Fastest Triage & Routing
+              </div>
+              <h2 className="text-xl font-bold text-slate-900 mb-2.5 flex items-center gap-2">
+                AI-Assisted Report
+              </h2>
+              <p className="text-sm text-slate-600 mb-6 leading-relaxed">
+                Describe the problem in everyday language using English or Roman Urdu. The Gemini AI engine extracts key details, assigns severity, and dispatches directly to the responsible authority.
+              </p>
+              
+              <div className="border-t border-slate-100 pt-5 mb-8">
+                <div className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-3">
+                  Included Features
+                </div>
+                <ul className="text-xs text-slate-600 space-y-2.5">
+                  <li className="flex items-start gap-2.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                    <span>Automatic department classification (HMC, HWASA, HESCO)</span>
+                  </li>
+                  <li className="flex items-start gap-2.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                    <span>Multilingual parsing (English, Urdu, and Roman Urdu)</span>
+                  </li>
+                  <li className="flex items-start gap-2.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                    <span>Optional photo evidence and geolocation tagging</span>
+                  </li>
+                  <li className="flex items-start gap-2.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                    <span>Instant generation of verified tracking code</span>
+                  </li>
+                </ul>
+              </div>
+            </div>
+
+            <Link
+              href="/report/ai"
+              className="w-full inline-flex items-center justify-center gap-2 bg-blue-900 hover:bg-blue-800 text-white font-semibold text-sm py-3.5 px-6 rounded-lg transition-colors shadow-sm"
+            >
+              <span>Start AI Report</span>
+              <ArrowRight className="w-4 h-4" />
+            </Link>
+          </div>
+
+          {/* Card 2: Manual Form */}
+          <div className="bg-white border border-slate-300 hover:border-slate-400 rounded-xl p-6 sm:p-8 shadow-sm flex flex-col justify-between transition-all">
+            <div>
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-slate-100 text-slate-700 font-semibold text-xs rounded-full border border-slate-200 mb-5">
+                <FileText className="w-3.5 h-3.5 text-slate-600" />
+                Standard Manual Entry
+              </div>
+              <h2 className="text-xl font-bold text-slate-900 mb-2.5">
+                Manual Form
+              </h2>
+              <p className="text-sm text-slate-600 mb-6 leading-relaxed">
+                Prefer to select your exact category yourself? Choose from official municipal grievance classifications without automated AI interpretation.
+              </p>
+
+              <div className="border-t border-slate-100 pt-5 mb-8">
+                <div className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-3">
+                  Included Features
+                </div>
+                <ul className="text-xs text-slate-600 space-y-2.5">
+                  <li className="flex items-start gap-2.5">
+                    <CheckCircle2 className="w-4 h-4 text-slate-600 shrink-0 mt-0.5" />
+                    <span>Direct selection from official department service lists</span>
+                  </li>
+                  <li className="flex items-start gap-2.5">
+                    <CheckCircle2 className="w-4 h-4 text-slate-600 shrink-0 mt-0.5" />
+                    <span>Standardized municipal form fields and categories</span>
+                  </li>
+                  <li className="flex items-start gap-2.5">
+                    <CheckCircle2 className="w-4 h-4 text-slate-600 shrink-0 mt-0.5" />
+                    <span>Operates independently of AI service availability</span>
+                  </li>
+                  <li className="flex items-start gap-2.5">
+                    <CheckCircle2 className="w-4 h-4 text-slate-600 shrink-0 mt-0.5" />
+                    <span>Identical verified tracking code for follow-ups</span>
+                  </li>
+                </ul>
+              </div>
+            </div>
+
+            <Link
+              href="/report/manual"
+              className="w-full inline-flex items-center justify-center gap-2 bg-white hover:bg-slate-50 text-slate-800 font-semibold text-sm py-3.5 px-6 rounded-lg border border-slate-300 transition-colors shadow-xs"
+            >
+              <span>Use Manual Form</span>
+              <ArrowRight className="w-4 h-4" />
+            </Link>
+          </div>
+        </div>
+
+        {/* Existing Complaint Tracking Banner */}
+        <div className="mt-12 bg-white border border-slate-200 rounded-xl p-5 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-3 text-center sm:text-left">
+            <div className="w-10 h-10 rounded-full bg-blue-50 border border-blue-200 flex items-center justify-center text-blue-900 shrink-0">
+              <Clock className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="text-sm font-bold text-slate-900">Already filed a complaint?</div>
+              <div className="text-xs text-slate-500">Check current officer reviews, site inspections, and resolution status with your tracking ID.</div>
+            </div>
+          </div>
+          <Link
+            href="/track"
+            className="inline-flex items-center gap-2 px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold text-xs rounded-lg border border-slate-300 transition-colors whitespace-nowrap"
+          >
+            <Search className="w-3.5 h-3.5" />
+            Track Status
           </Link>
         </div>
-      </div>
+
+        {/* Department Overview Strip */}
+        <div className="mt-10 pt-8 border-t border-slate-200 text-center">
+          <p className="text-xs text-slate-500 font-medium">
+            Official Municipal Authorities: <span className="font-semibold text-slate-700">HMC</span> (Sanitation & Roads) · <span className="font-semibold text-slate-700">HWASA</span> (Water & Drainage) · <span className="font-semibold text-slate-700">HESCO</span> (Power & Grids) · <span className="font-semibold text-slate-700">PWD Sindh</span> · <span className="font-semibold text-slate-700">TMC</span>
+          </p>
+        </div>
+      </main>
     </div>
   );
 }

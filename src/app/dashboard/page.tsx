@@ -27,6 +27,8 @@ import { ComplaintQueue, type QueueFilters } from "@/components/dashboard/compla
 import { ComplaintMap } from "@/components/maps/complaint-map";
 import { ComplaintDetailModal } from "@/components/complaints/detail-modal";
 import { HumanReviewModal } from "@/components/complaints/human-review-modal";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 import type {
   DbComplaint,
   DbDepartment,
@@ -34,8 +36,47 @@ import type {
 } from "@/types/database";
 
 export default function OfficerDashboardPage() {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<"queue" | "review" | "map">("queue");
   const [currentRole, setCurrentRole] = useState<"officer" | "reviewer" | "admin" | "citizen">("officer");
+  const [authChecking, setAuthChecking] = useState(true);
+
+  useEffect(() => {
+    async function verifyOfficerAccess() {
+      try {
+        const supabase = createClient();
+        const { data: { user }, error: authErr } = await supabase.auth.getUser();
+
+        if (authErr || !user) {
+          // Hard redirect — no data should ever be visible without a session
+          window.location.replace("/auth/login?redirect=/dashboard");
+          return;
+        }
+
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("role, display_name")
+          .eq("id", user.id)
+          .maybeSingle();
+
+        if (profile?.role === "citizen") {
+          window.location.replace("/my-complaints");
+          return;
+        }
+
+        if (profile?.role) {
+          setCurrentRole(profile.role as any);
+        }
+
+        setAuthChecking(false);
+      } catch (err) {
+        console.error("Dashboard auth error — redirecting to login:", err);
+        window.location.replace("/auth/login?redirect=/dashboard");
+      }
+    }
+
+    verifyOfficerAccess();
+  }, [router]);
 
   // Summary Metrics State
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
@@ -178,6 +219,15 @@ export default function OfficerDashboardPage() {
       pageSize: 20,
     });
   };
+
+  if (authChecking) {
+    return (
+      <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center gap-3">
+        <RotateCw className="w-8 h-8 animate-spin text-blue-600" />
+        <p className="text-xs text-slate-500 font-medium">Verifying Officer Security Credentials...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans">

@@ -18,6 +18,7 @@ import type {
 // ----------------------------------------------------------------------------
 export const ROLE_HIERARCHY: Record<UserRole, number> = {
   citizen: 1,
+  reviewer: 2,
   officer: 2,
   admin: 3,
 };

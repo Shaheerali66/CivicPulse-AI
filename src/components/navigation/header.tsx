@@ -22,6 +22,7 @@ import {
   Search,
   User,
   ChevronDown,
+  LogOut,
 } from "lucide-react";
 import { NotificationsPopover } from "@/components/notifications/notifications-popover";
 
@@ -144,6 +145,19 @@ export function AppHeader({
                       {currentRole === r && <span className="w-1.5 h-1.5 rounded-full bg-blue-600" />}
                     </button>
                   ))}
+
+                  {/* Sign Out */}
+                  <div className="border-t border-slate-100 mt-1 pt-1">
+                    <form method="POST" action="/api/auth/signout">
+                      <button
+                        type="submit"
+                        className="w-full text-left px-3 py-1.5 hover:bg-red-50 flex items-center gap-2 text-red-600 font-medium"
+                      >
+                        <LogOut className="w-3.5 h-3.5" />
+                        Sign Out
+                      </button>
+                    </form>
+                  </div>
                 </div>
               )}
             </div>

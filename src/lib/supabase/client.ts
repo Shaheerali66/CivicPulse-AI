@@ -24,3 +24,6 @@ export function createSupabaseBrowserClient() {
 
   return _client;
 }
+
+/** Alias for createSupabaseBrowserClient for convenience in auth pages */
+export const createClient = createSupabaseBrowserClient;

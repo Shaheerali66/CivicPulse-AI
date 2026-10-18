@@ -1,6 +1,13 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Allow network testing without cross-origin dev resource blocking
+  allowedDevOrigins: ["192.168.18.48", "localhost:3000"],
+
+  // Turbopack enabled by default in Next.js 16 — empty config silences
+  // the webpack-vs-turbopack conflict error (next.config.js webpack alias removed)
+  turbopack: {},
+
   // Image optimization for Supabase storage
   images: {
     remotePatterns: [

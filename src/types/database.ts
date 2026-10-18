@@ -123,13 +123,15 @@ export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
 
 export interface DbProfile {
   id: string;
-  user_id: string;
-  full_name: string | null;
+  display_name: string | null;  // actual DB column name (not full_name)
   phone: string | null;
   role: UserRole;
-  department_id: string | null;
   created_at: string;
   updated_at: string;
+  // Backward-compatibility and convenience aliases
+  full_name?: string | null;
+  user_id?: string;  // not in DB, kept for backward-compat with old code
+  department_id?: string | null;  // not in DB, kept for backward-compat
 }
 
 export interface DbDepartment {
@@ -164,44 +166,56 @@ export interface DbAIAnalysis {
 }
 
 export interface DbComplaint {
+  // Core columns matching 001_initial_schema.sql exactly
   id: string;
   tracking_id: string;
-  user_id: string;
+  citizen_id?: string | null;       // FK to profiles(id)
   title: string;
   description: string;
   category: ComplaintCategory | null;
   status: ComplaintStatus;
-  priority_score: number | null;
-  priority_band: PriorityBand | null;
+  priority?: PriorityBand;           // TEXT column, not priority_band
+  submission_method?: "ai" | "manual";
   department_id: string | null;
-  assigned_officer_id: string | null;
-  photo_path: string | null;
-  photo_url: string | null;
+  assigned_to?: string | null;       // FK to profiles(id), not assigned_officer_id
   latitude: number | null;
   longitude: number | null;
   location_label: string | null;
-  ai_analysis: DbAIAnalysis | null;
-  ai_from_model: boolean;
-  ai_processed_at: string | null;
-  needs_human_review: boolean;
-  safety_concern: boolean;
-  is_duplicate: boolean;
-  duplicate_of_id: string | null;
-  resolution_notes: string | null;
+  photo_path: string | null;
+  is_public?: boolean;
+  submitted_at?: string;             // actual timestamp column
+  created_at: string;               // canonical timestamp for UI
+  updated_at: string;
   resolved_at: string | null;
   closed_at: string | null;
-  created_at: string;
-  updated_at: string;
+
+  // Compatibility fields expected by UI components & API layers
+  user_id?: string;
+  priority_score?: number | null;
+  priority_band?: PriorityBand | null;
+  assigned_officer_id?: string | null;
+  photo_url?: string | null;
+  ai_analysis?: DbAIAnalysis | null;
+  ai_from_model?: boolean;
+  ai_processed_at?: string | null;
+  needs_human_review?: boolean;
+  safety_concern?: boolean;
+  is_duplicate?: boolean;
+  duplicate_of_id?: string | null;
+  resolution_notes?: string | null;
 }
 
 export interface DbComplaintEvent {
   id: string;
   complaint_id: string;
   actor_id: string | null;
-  event_type: ComplaintEventType;
+  event_type: ComplaintEventType | string;
   from_status: ComplaintStatus | null;
   to_status: ComplaintStatus | null;
   metadata: Record<string, unknown> | null;
+  previous_value?: Record<string, unknown> | null;
+  new_value?: Record<string, unknown> | null;
+  note?: string | null;
   created_at: string;
 }
 
@@ -233,8 +247,8 @@ export interface DbNotification {
 
 export interface ComplaintWithRelations extends DbComplaint {
   department: Pick<DbDepartment, "id" | "name" | "slug"> | null;
-  assigned_officer: Pick<DbProfile, "id" | "full_name"> | null;
-  submitter: Pick<DbProfile, "id" | "full_name"> | null;
+  assigned_officer: (Pick<DbProfile, "id" | "display_name"> & { full_name?: string | null }) | null;
+  submitter: (Pick<DbProfile, "id" | "display_name"> & { full_name?: string | null }) | null;
   duplicate_candidates: DuplicateCandidate[];
   events: ComplaintEventWithActor[];
 }
@@ -252,7 +266,7 @@ export interface DuplicateCandidate {
 }
 
 export interface ComplaintEventWithActor extends DbComplaintEvent {
-  actor: Pick<DbProfile, "id" | "full_name" | "role"> | null;
+  actor: (Pick<DbProfile, "id" | "display_name" | "role"> & { full_name?: string | null }) | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -318,3 +332,24 @@ export interface DepartmentWorkload {
   open: number;
   resolved: number;
 }
+
+// ---------------------------------------------------------------------------
+// Supabase Generic Database Schema mapping
+// ---------------------------------------------------------------------------
+export interface Database {
+  public: {
+    Tables: {
+      profiles: { Row: DbProfile; Insert: Partial<DbProfile>; Update: Partial<DbProfile> };
+      departments: { Row: DbDepartment; Insert: Partial<DbDepartment>; Update: Partial<DbDepartment> };
+      department_members: { Row: DbDepartmentMember; Insert: Partial<DbDepartmentMember>; Update: Partial<DbDepartmentMember> };
+      complaints: { Row: DbComplaint; Insert: Partial<DbComplaint>; Update: Partial<DbComplaint> };
+      complaint_events: { Row: DbComplaintEvent; Insert: Partial<DbComplaintEvent>; Update: Partial<DbComplaintEvent> };
+      complaint_duplicates: { Row: DbComplaintDuplicate; Insert: Partial<DbComplaintDuplicate>; Update: Partial<DbComplaintDuplicate> };
+      notifications: { Row: DbNotification; Insert: Partial<DbNotification>; Update: Partial<DbNotification> };
+      ai_analyses: { Row: Record<string, any>; Insert: Record<string, any>; Update: Record<string, any> };
+    };
+  };
+}
+
+export type Tables<T extends keyof Database["public"]["Tables"]> = Database["public"]["Tables"][T]["Row"];
+export type InsertTables<T extends keyof Database["public"]["Tables"]> = Database["public"]["Tables"][T]["Insert"];

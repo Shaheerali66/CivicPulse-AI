@@ -21,21 +21,33 @@ export default function SignInPage() {
 
     try {
       const supabase = createClient();
-      const { error: authError } = await supabase.auth.signInWithPassword({
-        email,
+      const { data, error: authError } = await supabase.auth.signInWithPassword({
+        email: email.trim().toLowerCase(),
         password,
       });
 
       if (authError) {
-        // Fallback for demo mock session if Supabase is unconfigured
-        if (email && password) {
-          router.push("/my-complaints");
-          return;
-        }
         throw authError;
       }
 
-      router.push("/my-complaints");
+      if (data?.user) {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("role")
+          .eq("id", data.user.id)
+          .maybeSingle();
+
+        const role = profile?.role || "citizen";
+        if (role === "officer" || role === "admin") {
+          router.push("/dashboard");
+          return;
+        } else {
+          router.push("/my-complaints");
+          return;
+        }
+      }
+
+      router.push("/dashboard");
     } catch (err: any) {
       setError(err.message || "Invalid email or password. Please try again.");
     } finally {

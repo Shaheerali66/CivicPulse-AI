@@ -22,7 +22,7 @@ export async function POST(
   try {
     const auth = await getCurrentUserWithProfile();
     if (!auth?.user || !auth.profile) {
-      return errorResponse("Authentication required.", 401, "UNAUTHORIZED");
+      return errorResponse("Please sign in with an authorized account to analyze complaints.", 401, "UNAUTHORIZED");
     }
 
     const { user, profile } = auth;
@@ -30,7 +30,7 @@ export async function POST(
 
     // Only staff can trigger re-analysis
     if (profile.role === "citizen") {
-      return errorResponse("Insufficient permissions.", 403, "FORBIDDEN");
+      return errorResponse("Only municipal officers and administrators can re-analyze existing complaints.", 403, "FORBIDDEN");
     }
 
     const supabase = await createSupabaseServerClient();

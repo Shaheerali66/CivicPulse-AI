@@ -1,52 +1,42 @@
 -- ============================================================================
 -- CivicPulse AI — Database Seed Configuration
--- Source of Truth: PRD-02 v2.0 (Section 3.2 & 6.2)
---
--- WARNING: DEMO DATA ONLY - FOR HACKATHON EVALUATION AND LOCAL DEVELOPMENT.
--- NEVER SEED REAL CITIZEN DATA OR COMMIT REAL CREDENTIALS.
--- All comments use Roman English or Roman Urdu.
+-- Real-world Municipal Dataset: Hyderabad, Sindh, Pakistan
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
--- 1. Demo Departments
--- These are demonstration configuration labels matching PRD-03 routing table.
--- They must not be represented as verified official government departments.
+-- 1. Hyderabad Municipal Departments
+-- Official civic service departments for complaint routing in Hyderabad.
 -- ----------------------------------------------------------------------------
-INSERT INTO public.departments (id, name, slug, description, is_active)
+INSERT INTO public.departments (name, slug, description, is_active)
 VALUES
   (
-    'a0000000-0000-0000-0000-000000000001',
-    'Roads & Works',
-    'roads-works',
-    'Demo department for road repairs, potholes, footpath maintenance, and public civil works.',
+    'Hyderabad Municipal Corporation (HMC)',
+    'hmc-hyderabad',
+    'Solid waste management, municipal sanitation, streetlights, local public parks, and neighborhood infrastructure.',
     true
   ),
   (
-    'a0000000-0000-0000-0000-000000000002',
-    'Sanitation',
-    'sanitation',
-    'Demo department for solid waste management, litter cleanup, and garbage collection.',
+    'Hyderabad Water & Sewerage Corporation (HWASA)',
+    'hwasa-hyderabad',
+    'Potable water supply networks, main pipelines, sewer overflow containment, and blocked drainage clearing.',
     true
   ),
   (
-    'a0000000-0000-0000-0000-000000000003',
-    'Water & Sewerage',
-    'water-sewerage',
-    'Demo department for clean water supply leaks, pipeline bursts, and blocked sewerage drains.',
+    'Hyderabad Electric Supply Company (HESCO)',
+    'hesco-hyderabad',
+    'Grid electricity distribution, pole transformers, exposed live high-voltage wiring, and power safety hazards.',
     true
   ),
   (
-    'a0000000-0000-0000-0000-000000000004',
-    'Electrical & Streetlights',
-    'electrical-streetlights',
-    'Demo department for non-functioning streetlights, exposed wiring, and electrical hazards.',
+    'Provincial Works & Services Department',
+    'works-services-sindh',
+    'Provincial highways, main arterial boulevards, major flyovers, bridges, and primary civic transport corridors.',
     true
   ),
   (
-    'a0000000-0000-0000-0000-000000000005',
-    'Municipal Services / Human Review',
-    'municipal-services',
-    'Demo department for general municipal queries, ambiguous reports, and human review triage.',
+    'Town Municipal Corporation (Latifabad/Qasimabad)',
+    'tmc-zonal',
+    'Zonal sweeping, neighborhood drain desilting, local encroachment monitoring, and union committee civic works.',
     true
   )
 ON CONFLICT (slug) DO UPDATE

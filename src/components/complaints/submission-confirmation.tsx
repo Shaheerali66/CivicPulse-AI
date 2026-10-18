@@ -10,8 +10,8 @@ import type { Department } from "@/lib/routing/department-mapping";
 interface SubmissionConfirmationProps {
   trackingId: string;
   status: ComplaintStatus;
-  categoryLabel: string;
-  department: Department;
+  categoryLabel: string | { label?: string; name?: string };
+  department: Department | { name?: string; slug?: string } | string;
   aiSummary?: string;
   needsHumanReview: boolean;
 }
@@ -24,6 +24,18 @@ export function SubmissionConfirmation({
   aiSummary,
   needsHumanReview,
 }: SubmissionConfirmationProps) {
+  const departmentName =
+    typeof department === "object" && department !== null
+      ? (department as any).name || (department as any).slug || "Municipal Services"
+      : typeof department === "string"
+      ? department
+      : "Municipal Services";
+
+  const categoryText =
+    typeof categoryLabel === "object" && categoryLabel !== null
+      ? (categoryLabel as any).label || (categoryLabel as any).name || "General"
+      : String(categoryLabel || "General");
+
   return (
     <div className="bg-white border border-[#CBD5E1] p-6 sm:p-8 rounded max-w-2xl mx-auto text-left">
       <div className="flex items-center gap-3 mb-6">
@@ -59,11 +71,11 @@ export function SubmissionConfirmation({
         </div>
         <div className="flex justify-between items-center py-1">
           <span className="text-[#64748B]">Category:</span>
-          <span className="font-semibold text-[#1E293B]">{categoryLabel}</span>
+          <span className="font-semibold text-[#1E293B]">{categoryText}</span>
         </div>
         <div className="flex justify-between items-center py-1">
           <span className="text-[#64748B]">Assigned Department:</span>
-          <span className="font-semibold text-[#0F3F6E]">{department}</span>
+          <span className="font-semibold text-[#0F3F6E]">{departmentName}</span>
         </div>
         {aiSummary && (
           <div className="pt-2">

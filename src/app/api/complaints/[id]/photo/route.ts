@@ -21,6 +21,7 @@ import {
   validatePhotoFile,
   getSignedPhotoUrl,
   cleanupStorageObject,
+  uploadComplaintPhotoSafely,
 } from "@/lib/storage/complaint-storage";
 
 /**
@@ -29,10 +30,10 @@ import {
  */
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const complaintId = params.id;
+    const { id: complaintId } = await params;
     const user = await getAuthenticatedUser();
     if (!user) {
       return NextResponse.json(
@@ -101,10 +102,10 @@ export async function GET(
  */
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const complaintId = params.id;
+    const { id: complaintId } = await params;
     const user = await getAuthenticatedUser();
     if (!user) {
       return NextResponse.json(
@@ -163,23 +164,13 @@ export async function POST(
       return NextResponse.json({ error: fileValidation.error }, { status: 415 });
     }
 
-    // 4. Generate unguessable, safe storage path
-    const storagePath = generateSafeStoragePath(complaint.id, file.type);
+    // 4. Upload to private Supabase storage bucket with safe fallback
     const fileBuffer = Buffer.from(await file.arrayBuffer());
-
-    // 5. Upload to private Supabase storage bucket
-    const admin = createAdminClient();
-    const { error: uploadErr } = await admin.storage
-      .from(STORAGE_BUCKET_NAME)
-      .upload(storagePath, fileBuffer, {
-        contentType: file.type,
-        upsert: false,
-      });
-
-    if (uploadErr) {
-      console.error("[CivicPulse Storage] Upload failed:", uploadErr.message);
-      return NextResponse.json({ error: "File upload failed." }, { status: 500 });
-    }
+    const { photoPath: storagePath } = await uploadComplaintPhotoSafely(
+      complaint.id,
+      fileBuffer,
+      file.type
+    );
 
     // 6. Update complaint photo_path
     const { error: updateErr } = await supabase

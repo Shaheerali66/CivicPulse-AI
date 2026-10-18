@@ -54,9 +54,9 @@ export function routeComplaint(analysis: AIAnalysis): RoutingDecision {
   // but defensive check here in case routing is called independently
   if (!Object.prototype.hasOwnProperty.call(CATEGORY_TO_DEPARTMENT, category)) {
     return {
-      assignedDepartment: "Municipal Services",
+      assignedDepartment: "Hyderabad Municipal Corporation (HMC)",
       requiresHumanReview: true,
-      routingReason: `Unrecognized category "${category}" — defaulted to Municipal Services.`,
+      routingReason: `Unrecognized category "${category}" — defaulted to Hyderabad Municipal Corporation (HMC).`,
       safetyOverrideApplied: false,
     };
   }
@@ -68,9 +68,9 @@ export function routeComplaint(analysis: AIAnalysis): RoutingDecision {
   if (!ACTIVE_DEPT_SET.has(mappedDept)) {
     // PRD-03 §7.2 step 4: no valid mapping → mark for review
     return {
-      assignedDepartment: "Municipal Services",
+      assignedDepartment: "Hyderabad Municipal Corporation (HMC)",
       requiresHumanReview: true,
-      routingReason: `Mapped department "${mappedDept}" is not currently active. Routed to Municipal Services for review.`,
+      routingReason: `Mapped department "${mappedDept}" is not currently active. Routed to HMC for review.`,
       safetyOverrideApplied: false,
     };
   }

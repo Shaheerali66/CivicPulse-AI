@@ -17,18 +17,30 @@ import { COMPLAINT_STATUSES, COMPLAINT_CATEGORIES, PRIORITY_BANDS, DUPLICATE_REV
 export const CreateComplaintSchema = z.object({
   title: z
     .string()
-    .min(5, "Title must be at least 5 characters")
     .max(200, "Title must not exceed 200 characters")
-    .trim(),
+    .trim()
+    .optional(),
   description: z
     .string()
     .min(10, "Description must be at least 10 characters")
-    .max(2000, "Description must not exceed 2000 characters")
+    .max(5000, "Description must not exceed 5000 characters")
     .trim(),
+  category: z.string().optional(),
+  reportingMode: z.string().optional(),
+  location: z
+    .object({
+      addressDescription: z.string().optional(),
+      latitude: z.number().optional(),
+      longitude: z.number().optional(),
+    })
+    .optional(),
   latitude: z.number().min(-90).max(90).optional().nullable(),
   longitude: z.number().min(-180).max(180).optional().nullable(),
   location_label: z.string().max(200).trim().optional().nullable(),
-  // Photo is handled separately via multipart upload
+  contactEmail: z.string().optional(),
+  imageBase64: z.string().optional(),
+  imageMimeType: z.string().optional(),
+  department_id: z.string().uuid().optional().nullable(),
 });
 
 export type CreateComplaintInput = z.infer<typeof CreateComplaintSchema>;

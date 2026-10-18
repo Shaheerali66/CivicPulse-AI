@@ -24,15 +24,15 @@ import {
 } from "@google/generative-ai";
 
 // ---------------------------------------------------------------------------
-// Environment validation — startup mein fail karo taake deploy se pehle pata chale
+// Environment validation — soft warning only, never crash server boot
 // ---------------------------------------------------------------------------
-function requireEnv(name: string): string {
+function getEnvOrWarn(name: string): string | null {
   const value = process.env[name];
   if (!value) {
-    throw new Error(
-      `[CivicPulse AI] Missing required server env variable: "${name}". ` +
-        `Set it in .env.local — never expose to client.`
+    console.warn(
+      `[CivicPulse AI] Missing env variable: "${name}". AI calls will fail gracefully.`
     );
+    return null;
   }
   return value;
 }
@@ -43,17 +43,33 @@ function requireEnv(name: string): string {
 // ---------------------------------------------------------------------------
 let _model: GenerativeModel | null = null;
 
-export function getGeminiModel(): GenerativeModel {
-  if (_model) return _model;
+export function getGeminiModel(customModel?: string): GenerativeModel {
+  if (_model && !customModel) return _model;
 
-  const apiKey = requireEnv("AI_API_KEY");
-  const modelName = process.env["AI_MODEL"] ?? "gemini-1.5-pro";
+  // Try keys in order of preference — never throw at module level
+  const apiKey =
+    process.env.GEMINI_API_KEY ||
+    process.env.AI_API_KEY ||
+    null;
+
+  if (!apiKey) {
+    throw new Error(
+      "[CivicPulse AI] No Gemini API key found. Set GEMINI_API_KEY in .env.local."
+    );
+  }
+
+  // Primary: gemini-2.5-flash (fast, state of the art)
+  // Fallbacks: gemini-2.0-flash → gemini-1.5-flash → gemini-1.5-pro
+  const modelName =
+    customModel ||
+    process.env["AI_MODEL"] ||
+    process.env["GEMINI_MODEL"] ||
+    "gemini-2.5-flash";
 
   const genAI = new GoogleGenerativeAI(apiKey);
 
-  _model = genAI.getGenerativeModel({
+  const modelInstance = genAI.getGenerativeModel({
     model: modelName,
-    // PRD-03 §5.3: block harmful content; allow civic complaint descriptions
     safetySettings: [
       {
         category: HarmCategory.HARM_CATEGORY_HARASSMENT,
@@ -74,7 +90,11 @@ export function getGeminiModel(): GenerativeModel {
     ],
   });
 
-  return _model;
+  if (!customModel) {
+    _model = modelInstance;
+  }
+
+  return modelInstance;
 }
 
 // ---------------------------------------------------------------------------
@@ -91,7 +111,7 @@ export interface GeminiRequestParams {
   systemInstruction: string;
   userMessage: string;
   image?: GeminiImageInput;
-  /** Request timeout ms. Default 30_000. PRD-03 §11: must not lose complaint on timeout. */
+  /** Request timeout ms. Default 25_000. PRD-03 §11: must not lose complaint on timeout. */
   timeoutMs?: number;
 }
 
@@ -101,10 +121,10 @@ export type GeminiResult =
 
 // ---------------------------------------------------------------------------
 // Core client call — returns raw text for schema validation upstream
-// PRD-03 §4.1: validate provider response with Zod (done in analyze-complaint.ts)
+// Cascades across models to ensure maximum availability
 // ---------------------------------------------------------------------------
 export async function callGemini(params: GeminiRequestParams): Promise<GeminiResult> {
-  const { systemInstruction, userMessage, image, timeoutMs = 30_000 } = params;
+  const { systemInstruction, userMessage, image, timeoutMs = 25_000 } = params;
 
   // Build multimodal content parts — image first if present (PRD-03 §5.4)
   const parts: (TextPart | InlineDataPart)[] = [];
@@ -117,46 +137,61 @@ export async function callGemini(params: GeminiRequestParams): Promise<GeminiRes
 
   parts.push({ text: userMessage } satisfies TextPart);
 
-  try {
-    const model = getGeminiModel();
-    const modelName = process.env["AI_MODEL"] ?? "gemini-1.5-pro";
+  // Model cascade: try gemini-2.5-flash first, then gemini-2.0-flash / gemini-1.5-flash
+  const preferredModel =
+    process.env["AI_MODEL"] || process.env["GEMINI_MODEL"] || "gemini-2.5-flash";
+  const candidateModels = Array.from(
+    new Set([preferredModel, "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"])
+  );
 
-    // Race AI call against timeout — PRD-03 §11: timeouts must not lose complaint
-    const result = await Promise.race([
-      model.generateContent({
-        systemInstruction,
-        contents: [{ role: "user", parts }],
-        generationConfig: {
-          responseMimeType: "application/json", // structured output mode
-          temperature: 0.1,    // low temp for deterministic classification
-          topP: 0.8,
-          maxOutputTokens: 1024, // PRD-03 §13: bound output size
-        },
-      }),
-      new Promise<never>((_, reject) =>
-        setTimeout(
-          () => reject(new Error(`Gemini request timed out after ${timeoutMs}ms`)),
-          timeoutMs
-        )
-      ),
-    ]);
+  let lastError = "AI model call failed";
 
-    const rawText = result.response.text().trim();
+  for (const modelCandidate of candidateModels) {
+    try {
+      const model = getGeminiModel(modelCandidate);
 
-    if (!rawText) {
-      return { success: false, error: "Gemini returned an empty response." };
+      const result = await Promise.race([
+        model.generateContent({
+          systemInstruction,
+          contents: [{ role: "user", parts }],
+          generationConfig: {
+            responseMimeType: "application/json",
+            temperature: 0.1,
+            topP: 0.8,
+            maxOutputTokens: 1024,
+          },
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`Gemini request timed out after ${timeoutMs}ms on ${modelCandidate}`)),
+            timeoutMs
+          )
+        ),
+      ]);
+
+      const rawText = result.response.text().trim();
+
+      if (rawText) {
+        return {
+          success: true,
+          rawText,
+          modelName: modelCandidate,
+          processedAt: new Date().toISOString(),
+        };
+      }
+    } catch (err: any) {
+      lastError = err instanceof Error ? err.message : String(err);
+      console.warn(`[CivicPulse AI] Candidate ${modelCandidate} failed: ${lastError}`);
+      // If error indicates invalid API key itself, don't try other models with same key
+      if (
+        lastError.includes("API key not valid") ||
+        lastError.includes("API_KEY_INVALID") ||
+        lastError.includes("No Gemini API key")
+      ) {
+        break;
+      }
     }
-
-    return {
-      success: true,
-      rawText,
-      modelName,
-      processedAt: new Date().toISOString(), // PRD-03 §4.1: record processing timestamp
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    // PRD-03 §13: log metadata, not raw prompts or images
-    console.error("[CivicPulse AI] callGemini error:", message);
-    return { success: false, error: message };
   }
+
+  return { success: false, error: lastError };
 }

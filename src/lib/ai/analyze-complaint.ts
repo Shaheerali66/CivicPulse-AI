@@ -19,7 +19,7 @@ import "server-only";
 import { ZodError } from "zod";
 import { callGemini, type GeminiImageInput } from "./client";
 import { CIVIC_COMPLAINT_SYSTEM_PROMPT, buildComplaintUserMessage } from "./prompts";
-import { AIAnalysisSchema, AI_ANALYSIS_FALLBACK, type AIAnalysis } from "./schema";
+import { AIAnalysisSchema, AI_ANALYSIS_FALLBACK, type AIAnalysis, type ComplaintCategory } from "./schema";
 
 // ---------------------------------------------------------------------------
 // PRD-03 §6 confidence thresholds — configurable for future tuning
@@ -171,9 +171,12 @@ function enforceReviewRules(analysis: AIAnalysis): AIAnalysis {
 //   imageUrl:    optional Supabase Storage URL for the photo (PRD-03 §5.4)
 // ---------------------------------------------------------------------------
 export async function analyzeComplaint(
-  description: string,
-  imageUrl?: string
+  input: string | { text?: string; description?: string; imageUrl?: string; timeoutMs?: number },
+  imageUrlParam?: string
 ): Promise<AnalyzeComplaintResult> {
+  const description = typeof input === "string" ? input : (input.text || input.description || "");
+  const imageUrl = typeof input === "string" ? imageUrlParam : (input.imageUrl || imageUrlParam);
+
   // Step 3: Prepare minimum necessary input (PRD-03 §3.2, §5.2)
   let image: GeminiImageInput | undefined;
   if (imageUrl) {
@@ -197,13 +200,14 @@ export async function analyzeComplaint(
   });
 
   if (!geminiResult.success) {
-    // PRD-03 §11: AI failure — mark as failed, preserve complaint with fallback
+    // PRD-03 §11: AI failure — preserve complaint with intelligent rule-based fallback
     console.warn(
-      "[CivicPulse AI] analyzeComplaint: provider call failed.",
+      "[CivicPulse AI] analyzeComplaint: provider call failed. Applying rule-based triage fallback.",
       geminiResult.error
     );
+    const ruleBased = generateRuleBasedAnalysis(description);
     return {
-      analysis: AI_ANALYSIS_FALLBACK,
+      analysis: ruleBased,
       fromAI: false,
       errorMessage: geminiResult.error,
     };
@@ -224,13 +228,12 @@ export async function analyzeComplaint(
       rawModelOutput: geminiResult.rawText,
     };
   } catch (err) {
-    // PRD-03 §4.1: reject invalid/incomplete output — log and use fallback
+    // PRD-03 §4.1: reject invalid/incomplete output — log and use rule-based fallback
     let errorMessage = "Unknown validation error";
 
     if (err instanceof SyntaxError) {
       errorMessage = `JSON parse error: ${err.message}`;
     } else if (err instanceof ZodError) {
-      // Log Zod issues server-side only — never expose to client
       const issues = err.errors
         .map((e) => `${e.path.join(".")}: ${e.message}`)
         .join("; ");
@@ -240,15 +243,148 @@ export async function analyzeComplaint(
     }
 
     console.error(
-      "[CivicPulse AI] analyzeComplaint: validation failed.",
+      "[CivicPulse AI] analyzeComplaint: validation failed, using rule-based triage.",
       errorMessage
     );
 
+    const ruleBased = generateRuleBasedAnalysis(description);
+
     return {
-      analysis: AI_ANALYSIS_FALLBACK,
+      analysis: ruleBased,
       fromAI: false,
       rawModelOutput: geminiResult.rawText,
       errorMessage,
     };
   }
+}
+
+/**
+ * Rule-based fallback classifier when Gemini API call or key is unavailable.
+ * Inspects description keywords and extracts intelligent category, severity,
+ * safety hazard indicators, and suggested department routing.
+ */
+export function generateRuleBasedAnalysis(description: string): AIAnalysis {
+  const text = (description || "").toLowerCase();
+
+  let category: ComplaintCategory = "unknown";
+  let suggestedDepartmentCategory = "Municipal Services";
+  let safetyConcern = false;
+  let severity: "low" | "medium" | "high" | "critical" = "medium";
+
+  // Hazard keywords check
+  if (
+    text.includes("danger") ||
+    text.includes("hazard") ||
+    text.includes("fire") ||
+    text.includes("shock") ||
+    text.includes("current") ||
+    text.includes("accident") ||
+    text.includes("fatal") ||
+    text.includes("spark") ||
+    text.includes("explosion") ||
+    text.includes("khatarnak") ||
+    text.includes("emergency")
+  ) {
+    safetyConcern = true;
+    severity = "high";
+  }
+
+  // Category keyword pattern matching — prioritize high-consequence hazards first
+  if (
+    text.includes("electric") ||
+    text.includes("wire") ||
+    text.includes("transformer") ||
+    text.includes("pole") ||
+    text.includes("bijli") ||
+    text.includes("hesco") ||
+    text.includes("spark") ||
+    text.includes("shock") ||
+    text.includes("short circuit")
+  ) {
+    category = "electrical_hazard";
+    suggestedDepartmentCategory = "Hyderabad Electric Supply Company (HESCO)";
+    safetyConcern = true;
+    severity = "critical";
+  } else if (
+    text.includes("water") ||
+    text.includes("pipe") ||
+    text.includes("leak") ||
+    text.includes("burst") ||
+    text.includes("pani") ||
+    text.includes("supply") ||
+    text.includes("hwasa")
+  ) {
+    category = "water_leakage";
+    suggestedDepartmentCategory = "Hyderabad Water & Sewerage Corporation (HWASA)";
+  } else if (
+    text.includes("drain") ||
+    text.includes("sewer") ||
+    text.includes("sewerage") ||
+    text.includes("gutter") ||
+    text.includes("nali") ||
+    text.includes("overflow") ||
+    text.includes("choked") ||
+    text.includes("choke")
+  ) {
+    category = "blocked_drain";
+    suggestedDepartmentCategory = "Hyderabad Water & Sewerage Corporation (HWASA)";
+  } else if (
+    text.includes("streetlight") ||
+    text.includes("street light") ||
+    text.includes("batti") ||
+    text.includes("lamp") ||
+    text.includes("dark") ||
+    text.includes("andhera")
+  ) {
+    category = "streetlight";
+    suggestedDepartmentCategory = "Hyderabad Municipal Corporation (HMC)";
+  } else if (
+    text.includes("garbage") ||
+    text.includes("kachra") ||
+    text.includes("trash") ||
+    text.includes("dump") ||
+    text.includes("litter") ||
+    text.includes("rubbish") ||
+    text.includes("kooda")
+  ) {
+    category = "garbage";
+    suggestedDepartmentCategory = "Hyderabad Municipal Corporation (HMC)";
+  } else if (
+    text.includes("footpath") ||
+    text.includes("sidewalk") ||
+    text.includes("pavement") ||
+    text.includes("pedestrian") ||
+    text.includes("walkway")
+  ) {
+    category = "footpath_damage";
+    suggestedDepartmentCategory = "Hyderabad Municipal Corporation (HMC)";
+  } else if (
+    text.includes("pothole") ||
+    text.includes("sadak") ||
+    text.includes("asphalt") ||
+    text.includes("crater") ||
+    text.includes("highway") ||
+    text.includes("road") ||
+    text.includes("flyover") ||
+    text.includes("bridge")
+  ) {
+    category = "road_damage";
+    suggestedDepartmentCategory = "Provincial Works & Services Department";
+  }
+
+  // Generate concise, neutral summary
+  const summary = description
+    ? `Civic issue reported: ${description.slice(0, 160)}${description.length > 160 ? "..." : ""}`
+    : "Civic report received requiring municipal triage.";
+
+  return {
+    category,
+    summary,
+    severity,
+    confidence: category !== "unknown" ? 0.75 : 0.40,
+    suggestedDepartmentCategory,
+    safetyConcern,
+    needsHumanReview: true,
+    reasoning: `Classified via rule-based keyword matching (${category}). Queued for human verification.`,
+  };
 }

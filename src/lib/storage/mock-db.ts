@@ -23,7 +23,7 @@ if (!globalStore.__civicpulse_complaints) {
     userId: "demo-user-1",
     description: "Deep pothole near Autobahn Road intersection causing severe traffic jams and risk of motorcycle accidents.",
     category: "road_damage",
-    department: "Roads & Works",
+    department: "Provincial Works & Services Department",
     severity: "high",
     status: "in_progress",
     reportingMode: "ai_assisted",
@@ -33,7 +33,7 @@ if (!globalStore.__civicpulse_complaints) {
       longitude: 68.3512,
     },
     aiSummary: "Hazardous pothole on Autobahn Road creating accident risks for commuters.",
-    aiSuggestedDepartment: "Roads & Works",
+    aiSuggestedDepartment: "Provincial Works & Services Department",
     needsHumanReview: false,
     history: [
       {
@@ -46,7 +46,7 @@ if (!globalStore.__civicpulse_complaints) {
         status: "assigned",
         label: "Assigned to Engineering Crew",
         timestamp: new Date(Date.now() - 3600000 * 24).toISOString(),
-        notes: "Dispatched to Hyderabad Roads & Works division.",
+        notes: "Dispatched to Provincial Works & Services Department.",
       },
       {
         status: "in_progress",
@@ -65,7 +65,7 @@ if (!globalStore.__civicpulse_complaints) {
     userId: "demo-user-1",
     description: "Sewage water overflowing into residential street near Qasimabad Phase 1, foul odor and health hazard.",
     category: "water_leakage",
-    department: "Water & Sewerage",
+    department: "Hyderabad Water & Sewerage Corporation (HWASA)",
     severity: "critical",
     status: "needs_review",
     reportingMode: "manual",
@@ -75,7 +75,7 @@ if (!globalStore.__civicpulse_complaints) {
       longitude: 68.3375,
     },
     aiSummary: "Sewage overflow causing civic sanitation issues in Qasimabad.",
-    aiSuggestedDepartment: "Water & Sewerage",
+    aiSuggestedDepartment: "Hyderabad Water & Sewerage Corporation (HWASA)",
     needsHumanReview: true,
     history: [
       {
