@@ -1,79 +1,75 @@
 /**
  * src/lib/routing/department-mapping.ts
  *
- * PRD-03 :: Department Routing — Deterministic category → department mapper.
- * This is the authoritative single source of truth for routing logic.
+ * PRD-03 §7 — Deterministic category-to-department configuration.
+ * Single source of truth for all routing mappings.
  *
- * Design decisions:
- *  - Uses a typed Record (not a switch/if-chain) for O(1) lookup and easy extensibility.
- *  - ACTIVE_DEPARTMENTS defines the valid department set — acts as a runtime registry.
- *  - validateDepartmentMapping() can be called at startup to catch config drift early.
+ * PRD-03 §7.3 rules:
+ *   - Do not use model-generated dept names as DB IDs directly
+ *   - Mappings must be configurable (not scattered throughout app)
+ *   - Routing must be deterministic for same category + config version
+ *   - Unknown category routes to human review per configured policy
  *
- * Server-safe: this file has no server-only import because department definitions
- * may also be needed in shared utilities. If you add DB calls here, add "server-only".
+ * Server-safe (no server-only import) — department names may be shared
+ * with shared utilities. Add "server-only" if DB calls are added here.
  */
 
 import type { ComplaintCategory } from "@/lib/ai/schema";
 
 // ---------------------------------------------------------------------------
 // Active department registry — mirrors the departments table in the database.
-// Update this list whenever a new department row is added to Supabase.
+// PRD-03 §7.2 step 3: confirm target department exists and is active.
+// Update this list whenever a department row is added/removed in Supabase.
 // ---------------------------------------------------------------------------
 export const ACTIVE_DEPARTMENTS = [
   "Roads & Works",
   "Sanitation",
   "Water & Sewerage",
   "Electrical & Streetlights",
-  "Municipal Services / Human Review",
+  "Municipal Services",
 ] as const;
 
 export type Department = (typeof ACTIVE_DEPARTMENTS)[number];
 
 // ---------------------------------------------------------------------------
-// Category → Department mapping (deterministic, no AI involved)
+// PRD-03 §7.1 — Initial demo mapping (Hyderabad, Sindh, Pakistan)
+// Category → Department (verified against controlled ACTIVE_DEPARTMENTS list)
 // ---------------------------------------------------------------------------
 export const CATEGORY_TO_DEPARTMENT: Record<ComplaintCategory, Department> = {
   // Sadak aur footpath — Roads & Works department
-  road_damage: "Roads & Works",
-  footpath_damage: "Roads & Works",
+  road_damage:      "Roads & Works",
+  footpath_damage:  "Roads & Works",
 
   // Kachra / safai — Sanitation department
-  garbage: "Sanitation",
+  garbage:          "Sanitation",
   waste_collection: "Sanitation",
 
   // Pani aur sewerage — Water & Sewerage department
-  water_leakage: "Water & Sewerage",
-  blocked_drain: "Water & Sewerage",
+  water_leakage:    "Water & Sewerage",
+  blocked_drain:    "Water & Sewerage",
 
-  // Bijli aur batti — Electrical & Streetlights department
-  streetlight: "Electrical & Streetlights",
-  electrical_hazard: "Electrical & Streetlights",
+  // Bijli aur streetlights — Electrical & Streetlights department
+  streetlight:      "Electrical & Streetlights",
+  electrical_hazard:"Electrical & Streetlights",
 
-  // Unclassified — routed to human review queue
-  other: "Municipal Services / Human Review",
-  unknown: "Municipal Services / Human Review",
+  // Unmapped — Municipal Services + human review per PRD-03 §7.1
+  other:            "Municipal Services",
+  unknown:          "Municipal Services",   // routed with human review flag
 };
 
 // ---------------------------------------------------------------------------
-// Public API: get department for a given complaint category
-// ---------------------------------------------------------------------------
-export function getDepartmentForCategory(category: ComplaintCategory): Department {
-  return CATEGORY_TO_DEPARTMENT[category];
-}
-
-// ---------------------------------------------------------------------------
-// Validation function — call at app startup or in a server bootstrap check
-// to ensure every mapped department exists in the active department registry.
-// Throws if there is a mismatch — catches config drift before it hits production.
+// Validate mapping integrity — every mapped dept must be in ACTIVE_DEPARTMENTS.
+// PRD-03 §7.2 step 3: catches config drift between this file and the DB.
+// Call this in server startup / CI checks. Throws on mismatch.
 // ---------------------------------------------------------------------------
 export function validateDepartmentMapping(): void {
-  const activeDeptSet = new Set<string>(ACTIVE_DEPARTMENTS);
+  const activeSet = new Set<string>(ACTIVE_DEPARTMENTS);
   const errors: string[] = [];
 
-  for (const [category, department] of Object.entries(CATEGORY_TO_DEPARTMENT)) {
-    if (!activeDeptSet.has(department)) {
+  for (const [category, dept] of Object.entries(CATEGORY_TO_DEPARTMENT)) {
+    if (!activeSet.has(dept)) {
       errors.push(
-        `Category "${category}" maps to department "${department}" which is NOT in ACTIVE_DEPARTMENTS.`
+        `Category "${category}" → "${dept}" is NOT in ACTIVE_DEPARTMENTS.`
       );
     }
   }
@@ -85,31 +81,24 @@ export function validateDepartmentMapping(): void {
   }
 
   console.info(
-    `[CivicPulse Routing] Department mapping validated — ${Object.keys(CATEGORY_TO_DEPARTMENT).length} categories → ${ACTIVE_DEPARTMENTS.length} departments.`
+    `[CivicPulse Routing] OK — ${Object.keys(CATEGORY_TO_DEPARTMENT).length} categories mapped to ${ACTIVE_DEPARTMENTS.length} departments.`
   );
 }
 
 // ---------------------------------------------------------------------------
-// Helper: resolve department from a full AI analysis result
-// Uses the AI's category as ground truth, ignoring suggestedDepartmentCategory
-// to ensure deterministic routing not dependent on model phrasing.
+// Public helpers
 // ---------------------------------------------------------------------------
-export function resolveDepartmentFromAnalysis(params: {
-  category: ComplaintCategory;
-  needsHumanReview: boolean;
-}): Department {
-  // If human review is flagged, always route to human review queue regardless of category
-  if (params.needsHumanReview) {
-    return "Municipal Services / Human Review";
-  }
-  return getDepartmentForCategory(params.category);
+
+/** Get the department for a single validated category (O(1) lookup). */
+export function getDepartmentForCategory(category: ComplaintCategory): Department {
+  return CATEGORY_TO_DEPARTMENT[category];
 }
 
-// ---------------------------------------------------------------------------
-// Helper: get all categories for a specific department (useful for filtering UI)
-// ---------------------------------------------------------------------------
-export function getCategoriesForDepartment(department: Department): ComplaintCategory[] {
-  return (Object.entries(CATEGORY_TO_DEPARTMENT) as [ComplaintCategory, Department][])
-    .filter(([, dept]) => dept === department)
+/** Get all categories that map to a given department (for dashboard filtering). */
+export function getCategoriesForDepartment(dept: Department): ComplaintCategory[] {
+  return (
+    Object.entries(CATEGORY_TO_DEPARTMENT) as [ComplaintCategory, Department][]
+  )
+    .filter(([, d]) => d === dept)
     .map(([cat]) => cat);
 }

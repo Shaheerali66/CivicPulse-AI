@@ -1,7 +1,7 @@
 /**
  * src/lib/ai/schema.ts
  *
- * PRD-03 :: AI Engine — Zod validation schema for structured AI output.
+ * PRD-03 §4.1 — Zod validation schema for structured AI output.
  * Server-side only. Do NOT import this from any client component.
  *
  * Sab categories civic complaints ke liye defined hain.
@@ -12,6 +12,7 @@ import { z } from "zod";
 
 // ---------------------------------------------------------------------------
 // Category enum — har ek civic complaint type map hota hai ek department se
+// PRD-03 §4: controlled category list to avoid inconsistent free-text
 // ---------------------------------------------------------------------------
 export const ComplaintCategoryEnum = z.enum([
   "road_damage",        // sadak toot gayi / road broken
@@ -22,94 +23,88 @@ export const ComplaintCategoryEnum = z.enum([
   "blocked_drain",      // nali band / choked drain
   "streetlight",        // bijli ki batti kharab
   "electrical_hazard",  // bijli ka khatarnak masla
-  "other",              // koi aur masla
+  "other",              // koi aur masla jo list mein nahi
   "unknown",            // AI ko samajh nahi aaya — human review needed
 ]);
 
 export type ComplaintCategory = z.infer<typeof ComplaintCategoryEnum>;
 
 // ---------------------------------------------------------------------------
-// Severity enum — kitna urgent hai masla
+// Severity enum — kitna urgent hai masla (PRD-03 §9.2)
+// Low(20) / Medium(45) / High(75) / Critical(100) — used in priority formula
 // ---------------------------------------------------------------------------
 export const SeverityEnum = z.enum(["low", "medium", "high", "critical"]);
 
 export type Severity = z.infer<typeof SeverityEnum>;
 
 // ---------------------------------------------------------------------------
-// Core AI Analysis Schema — Gemini/LLM response ka structured output
+// Core AI Analysis Schema — exactly as specified in PRD-03 §4.1
+// Yeh schema Gemini/LLM response validate karta hai Zod se
 // ---------------------------------------------------------------------------
 export const AIAnalysisSchema = z.object({
   /**
-   * Detected civic complaint category.
-   * Must match a strict enum value. Use "unknown" when ambiguous.
+   * Standardized issue classification (PRD-03 §4.2).
+   * Use "unknown" when insufficient evidence to distinguish categories.
    */
   category: ComplaintCategoryEnum,
 
   /**
-   * Short human-readable summary of the complaint.
-   * Min 5 chars (non-trivial), max 500 chars (concise).
+   * Short, neutral summary of the reported issue (PRD-03 §4.2).
+   * Based only on supported facts — model must not invent details.
    */
-  summary: z
-    .string()
-    .min(5, "Summary must be at least 5 characters")
-    .max(500, "Summary must not exceed 500 characters"),
+  summary: z.string().min(5).max(500),
 
   /**
-   * Urgency level of the complaint.
-   * "critical" = immediate safety risk, "low" = minor inconvenience.
+   * Estimated impact severity for review and prioritization (PRD-03 §4.2).
    */
   severity: SeverityEnum,
 
   /**
-   * AI confidence score between 0 (no confidence) and 1 (fully confident).
-   * Below 0.5 → needsHumanReview should generally be true.
+   * Model-reported confidence indicator 0–1 (PRD-03 §4.2, §6).
+   * >=0.80: may auto-proceed | 0.60–0.79: flag review | <0.60: human review.
+   * Treated as an indicator — not a calibrated probability.
    */
-  confidence: z
-    .number()
-    .min(0, "Confidence must be >= 0")
-    .max(1, "Confidence must be <= 1"),
+  confidence: z.number().min(0).max(1),
 
   /**
-   * Human-readable department category suggestion.
-   * E.g., "Roads & Works", "Sanitation", etc.
-   * This is AI's suggestion — final mapping is done by department-mapping.ts.
+   * Category/routing key for department mapping — max 100 chars (PRD-03 §4.1).
+   * AI suggestion only; validated server-side by department-mapping.ts.
+   * Must not be used as a DB ID directly (PRD-03 §7.3).
    */
-  suggestedDepartmentCategory: z.string().min(1),
+  suggestedDepartmentCategory: z.string().max(100),
 
   /**
-   * True if the issue poses an immediate safety risk to citizens.
-   * Triggers priority escalation in the routing layer.
+   * Indicates a potential safety-related issue requiring attention (PRD-03 §4.2).
+   * Triggers safety-review escalation per PRD-03 §9.4.
    */
   safetyConcern: z.boolean(),
 
   /**
-   * True if a human agent should review before automatic routing.
-   * Always true when confidence < 0.5 or category === "unknown".
+   * Signals that result should be reviewed by an authorized officer (PRD-03 §4.2, §6.1).
+   * Required when: confidence < 0.60, category unknown, safety concern, etc.
    */
   needsHumanReview: z.boolean(),
 
   /**
-   * AI's internal reasoning for its classification.
-   * Max 500 chars — used for audit trails and human review queue.
-   * Must NOT echo back user-supplied text verbatim to prevent data leakage.
+   * Short, user-safe explanation based on available evidence (PRD-03 §4.2).
+   * Not hidden chain-of-thought. Max 500 chars. No raw user text echoed.
    */
-  reasoning: z
-    .string()
-    .max(500, "Reasoning must not exceed 500 characters"),
+  reasoning: z.string().max(500),
 });
 
 export type AIAnalysis = z.infer<typeof AIAnalysisSchema>;
 
 // ---------------------------------------------------------------------------
-// Fallback / error state — jab AI call fail ho jaye
+// Fallback state — jab AI call fail ho jaye
+// PRD-03 §11: original complaint must be preserved; analysis marked pending/failed
 // ---------------------------------------------------------------------------
 export const AI_ANALYSIS_FALLBACK = {
   category: "unknown" as ComplaintCategory,
   summary: "Unable to analyze complaint at this time.",
   severity: "medium" as Severity,
   confidence: 0,
-  suggestedDepartmentCategory: "Municipal Services / Human Review",
+  suggestedDepartmentCategory: "Municipal Services",
   safetyConcern: false,
   needsHumanReview: true,
-  reasoning: "AI analysis failed or timed out. Routed to human review queue.",
+  reasoning: "AI analysis failed or timed out. Manual review required.",
 } satisfies AIAnalysis;
