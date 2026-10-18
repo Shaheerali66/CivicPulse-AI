@@ -1,6 +1,14 @@
 /**
  * src/app/api/complaints/[id]/route.ts
  *
+ * PRD-01 :: Tracking and Detail API Route.
+ * Fetches citizen-safe details for a complaint by trackingId or internal ID.
+ * Strict data minimization: no officer internal notes or sensitive data exposed.
+ */
+
+import { NextRequest, NextResponse } from "next/server";
+import { complaintStore } from "@/lib/storage/mock-db";
+import { COMPLAINT_CATEGORIES, COMPLAINT_STATUS_LABELS, type PublicTrackingResponse } from "@/types/complaint";
  * PRD-02 :: Single Complaint Retrieval (GET /api/complaints/[id]).
  * Verifies caller authorization and role-based department scope.
  * Generates short-lived signed photo URLs only for authorized callers.
@@ -8,7 +16,6 @@
  * All comments use Roman English or Roman Urdu.
  */
 
-import { NextRequest, NextResponse } from "next/server";
 import {
   createServerSupabaseClient,
   getAuthenticatedUser,
