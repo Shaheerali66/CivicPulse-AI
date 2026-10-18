@@ -1,0 +1,54 @@
+@import "tailwindcss";
+
+:root {
+  /* CivicPulse color system — solid colors only, no gradients */
+  --background: #ffffff;
+  --foreground: #090d16;
+  --card: #ffffff;
+  --card-foreground: #090d16;
+  --popover: #ffffff;
+  --popover-foreground: #090d16;
+  --primary: #2563eb;
+  --primary-foreground: #f8fafc;
+  --secondary: #f1f5f9;
+  --secondary-foreground: #0f172a;
+  --muted: #f1f5f9;
+  --muted-foreground: #64748b;
+  --accent: #f1f5f9;
+  --accent-foreground: #0f172a;
+  --destructive: #ef4444;
+  --destructive-foreground: #f8fafc;
+  --border: #e2e8f0;
+  --input: #e2e8f0;
+  --ring: #2563eb;
+  --radius: 0.5rem;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-feature-settings: "rlig" 1, "calt" 1;
+}
+
+/* Leaflet map container — explicit dimensions */
+.leaflet-container {
+  width: 100%;
+  border-radius: 0.375rem;
+  z-index: 0;
+}
+
+/* Status color system — used consistently across all components */
+.status-submitted { background-color: #f1f5f9; color: #334155; border-color: #cbd5e1; }
+.status-analyzing { background-color: #dbeafe; color: #1d4ed8; border-color: #93c5fd; }
+.status-needs_review { background-color: #fef3c7; color: #92400e; border-color: #fcd34d; }
+.status-assigned { background-color: #e0e7ff; color: #3730a3; border-color: #a5b4fc; }
+.status-in_progress { background-color: #cffafe; color: #155e75; border-color: #67e8f9; }
+.status-resolved { background-color: #dcfce7; color: #166534; border-color: #86efac; }
+.status-closed { background-color: #f3f4f6; color: #4b5563; border-color: #d1d5db; }
+.status-rejected { background-color: #fee2e2; color: #991b1b; border-color: #fca5a5; }
+
+/* Priority color system */
+.priority-low { background-color: #dcfce7; color: #166534; border-color: #86efac; }
+.priority-medium { background-color: #fef9c3; color: #854d0e; border-color: #fde047; }
+.priority-high { background-color: #ffedd5; color: #9a3412; border-color: #fdba74; }
+.priority-critical { background-color: #fee2e2; color: #991b1b; border-color: #fca5a5; }
