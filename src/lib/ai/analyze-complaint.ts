@@ -1,170 +1,236 @@
 /**
  * src/lib/ai/analyze-complaint.ts
  *
- * PRD-03 :: AI Engine — Main public entry point for complaint analysis.
- * Orchestrates: prompt building → AI call → Zod validation → fallback.
+ * PRD-03 §3.2, §5, §6, §11 — Main server-side complaint analysis function.
  *
- * This module is SERVER-ONLY. It does not throw on AI failures; instead
- * it returns the fallback `AIAnalysis` so complaint persistence always
- * succeeds even when the AI service is degraded.
+ * Public API:
+ *   analyzeComplaint(description: string, imageUrl?: string): Promise<AnalyzeComplaintResult>
  *
- * Usage (from a Next.js Server Action or API Route):
- *   const analysis = await analyzeComplaint({ text, imageBase64, imageMimeType });
+ * Design principles (PRD-03):
+ *   - Never throw on AI failure — return fallback so complaint persistence succeeds (§11)
+ *   - Validate every field with Zod — never assume JSON is valid (§4.1)
+ *   - Apply deterministic business rules after AI validation (§6.1)
+ *   - Record model name and processing timestamp (§4.1)
+ *   - Keep AI credentials server-side only (§3.3)
  */
 
 import "server-only";
 
 import { ZodError } from "zod";
-import { callAIModel, type AIClientImagePart } from "./client";
+import { callGemini, type GeminiImageInput } from "./client";
 import { CIVIC_COMPLAINT_SYSTEM_PROMPT, buildComplaintUserMessage } from "./prompts";
-import {
-  AIAnalysisSchema,
-  AI_ANALYSIS_FALLBACK,
-  type AIAnalysis,
-} from "./schema";
+import { AIAnalysisSchema, AI_ANALYSIS_FALLBACK, type AIAnalysis } from "./schema";
 
 // ---------------------------------------------------------------------------
-// Input params for the public analyzeComplaint function
+// PRD-03 §6 confidence thresholds — configurable for future tuning
 // ---------------------------------------------------------------------------
-export interface AnalyzeComplaintParams {
-  /** Raw citizen complaint text. Will be sanitized and truncated internally. */
-  text: string;
-  /**
-   * Optional base64-encoded image (do NOT include the "data:image/...;base64," prefix).
-   * If provided, mimeType must also be supplied.
-   */
-  imageBase64?: string;
-  /** MIME type of the attached image, e.g., "image/jpeg", "image/png", "image/webp" */
-  imageMimeType?: string;
-  /**
-   * AI request timeout in milliseconds.
-   * Default: 25_000ms (25 seconds) — slightly under typical server timeout limits.
-   */
-  timeoutMs?: number;
-}
+const CONFIDENCE_THRESHOLDS = {
+  /** Below this: always require human review */
+  humanReview: 0.60,
+  /** Below this but above humanReview: flag review if routing is ambiguous */
+  flagForReview: 0.80,
+} as const;
 
 // ---------------------------------------------------------------------------
-// Result envelope — consumer always gets back a typed AIAnalysis
+// Allowed image MIME types — PRD-03 §5.4: validate before sending
+// ---------------------------------------------------------------------------
+const ALLOWED_IMAGE_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+]);
+
+// ---------------------------------------------------------------------------
+// Result type — consumer always receives a typed AIAnalysis
 // ---------------------------------------------------------------------------
 export interface AnalyzeComplaintResult {
+  /** Validated and business-rule-enforced AI analysis */
   analysis: AIAnalysis;
-  /**
-   * True if the analysis came from the AI model (may still have needsHumanReview).
-   * False if we fell back to the default (AI call failed or validation failed).
-   */
+  /** True if result came from the AI model; false if fallback was used */
   fromAI: boolean;
-  /** Raw model output text — useful for debugging and audit logs. Undefined on fallback. */
+  /** Model identifier — for audit logging per PRD-03 §4.1 */
+  modelName?: string;
+  /** ISO timestamp of processing — for audit logging per PRD-03 §4.1 */
+  processedAt?: string;
+  /** Raw model JSON text — for debugging, never sent to client */
   rawModelOutput?: string;
-  /** Error message if AI failed — useful for logging but should NOT be surfaced to users. */
+  /** Server-side error description — log only, do NOT surface to users */
   errorMessage?: string;
 }
 
 // ---------------------------------------------------------------------------
-// Attempt to parse raw JSON from the model into a validated AIAnalysis
+// Image URL fetch and validation — PRD-03 §5.4
+// imageUrl is a Supabase Storage URL for the complaint photo
+// ---------------------------------------------------------------------------
+async function fetchImageForGemini(
+  imageUrl: string
+): Promise<GeminiImageInput | null> {
+  try {
+    const response = await fetch(imageUrl, { cache: "no-store" });
+
+    if (!response.ok) {
+      console.warn(
+        `[CivicPulse AI] Image fetch failed: ${response.status} ${response.statusText}`
+      );
+      return null;
+    }
+
+    const contentType = response.headers.get("content-type") ?? "";
+    // Normalize MIME to base type without charset parameters
+    const mimeType = contentType.split(";")[0].trim().toLowerCase();
+
+    // PRD-03 §5.4: validate file type before processing
+    if (!ALLOWED_IMAGE_MIME_TYPES.has(mimeType)) {
+      console.warn(`[CivicPulse AI] Unsupported image MIME type: "${mimeType}"`);
+      return null;
+    }
+
+    const buffer = await response.arrayBuffer();
+
+    // PRD-03 §13: enforce size limit — 4 MB max to control cost/latency
+    const MAX_BYTES = 4 * 1024 * 1024;
+    if (buffer.byteLength > MAX_BYTES) {
+      console.warn(
+        `[CivicPulse AI] Image too large (${buffer.byteLength} bytes). Skipping.`
+      );
+      return null;
+    }
+
+    const base64Data = Buffer.from(buffer).toString("base64");
+
+    return {
+      base64Data,
+      mimeType: mimeType as GeminiImageInput["mimeType"],
+    };
+  } catch (err) {
+    console.warn("[CivicPulse AI] Image fetch error:", err);
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Parse and validate raw model output — PRD-03 §4.1
+// "Never assume that requesting JSON guarantees valid JSON"
 // ---------------------------------------------------------------------------
 function parseAndValidate(rawText: string): AIAnalysis {
-  // Strip any accidental markdown code fences the model might produce
+  // Strip accidental markdown fences the model may produce despite JSON mode
   const cleaned = rawText
     .replace(/^```(?:json)?\s*/i, "")
     .replace(/\s*```$/i, "")
     .trim();
 
-  // Parse JSON — may throw SyntaxError
+  // May throw SyntaxError
   const parsed: unknown = JSON.parse(cleaned);
 
-  // Zod validation — may throw ZodError
+  // May throw ZodError — validates all fields per PRD-03 §4.1
   return AIAnalysisSchema.parse(parsed);
 }
 
 // ---------------------------------------------------------------------------
-// Post-processing: enforce business rules that the model might miss
+// Enforce deterministic business rules — PRD-03 §6.1 human review triggers
+// Applied AFTER Zod validation so rules cannot be bypassed by model output
 // ---------------------------------------------------------------------------
-function enforceBusinessRules(analysis: AIAnalysis): AIAnalysis {
-  const enforced = { ...analysis };
+function enforceReviewRules(analysis: AIAnalysis): AIAnalysis {
+  const result = { ...analysis };
 
-  // Rule 1: If confidence < 0.5, always require human review
-  if (enforced.confidence < 0.5) {
-    enforced.needsHumanReview = true;
+  // Rule 1 (PRD-03 §6): confidence < threshold → require human review
+  if (result.confidence < CONFIDENCE_THRESHOLDS.humanReview) {
+    result.needsHumanReview = true;
   }
 
-  // Rule 2: "unknown" category always needs human review
-  if (enforced.category === "unknown") {
-    enforced.needsHumanReview = true;
+  // Rule 2 (PRD-03 §6.1): category unknown → require review
+  if (result.category === "unknown") {
+    result.needsHumanReview = true;
   }
 
-  // Rule 3: electrical_hazard is always a safety concern
-  if (enforced.category === "electrical_hazard") {
-    enforced.safetyConcern = true;
+  // Rule 3 (PRD-03 §6.1, §9.4): safety concern → require review
+  if (result.safetyConcern) {
+    result.needsHumanReview = true;
   }
 
-  // Rule 4: critical severity always needs human review confirmation
-  if (enforced.severity === "critical") {
-    enforced.needsHumanReview = true;
+  // Rule 4 (PRD-03 §9.4): electrical_hazard is always a safety concern
+  if (result.category === "electrical_hazard") {
+    result.safetyConcern = true;
+    result.needsHumanReview = true;
   }
 
-  return enforced;
+  // Rule 5 (PRD-03 §6.1): critical severity — human must confirm before finalizing
+  if (result.severity === "critical") {
+    result.needsHumanReview = true;
+  }
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------
-// Main exported function
+// Main exported function — PRD-03 §3.2 processing flow steps 3–9
+//
+// analyzeComplaint(description, imageUrl?)
+//   description: citizen complaint text
+//   imageUrl:    optional Supabase Storage URL for the photo (PRD-03 §5.4)
 // ---------------------------------------------------------------------------
 export async function analyzeComplaint(
-  params: AnalyzeComplaintParams
+  description: string,
+  imageUrl?: string
 ): Promise<AnalyzeComplaintResult> {
-  const { text, imageBase64, imageMimeType, timeoutMs = 25_000 } = params;
-
-  const hasImage = Boolean(imageBase64 && imageMimeType);
-
-  // 1. Build structured prompt parts
-  const userMessage = buildComplaintUserMessage({
-    complaintText: text,
-    hasImage,
-  });
-
-  let image: AIClientImagePart | undefined;
-  if (hasImage && imageBase64 && imageMimeType) {
-    image = { base64Data: imageBase64, mimeType: imageMimeType };
+  // Step 3: Prepare minimum necessary input (PRD-03 §3.2, §5.2)
+  let image: GeminiImageInput | undefined;
+  if (imageUrl) {
+    const fetched = await fetchImageForGemini(imageUrl);
+    if (fetched) {
+      image = fetched;
+    }
+    // If fetch failed, proceed text-only — PRD-03 §5.4: system must still support
+    // manual reporting when image analysis is unavailable
   }
 
-  // 2. Call the AI model
-  const aiResult = await callAIModel({
+  const hasImage = image !== undefined;
+  const userMessage = buildComplaintUserMessage({ description, hasImage });
+
+  // Step 4: Call AI provider (PRD-03 §3.2)
+  const geminiResult = await callGemini({
     systemInstruction: CIVIC_COMPLAINT_SYSTEM_PROMPT,
     userMessage,
     image,
-    timeoutMs,
+    timeoutMs: 25_000, // PRD-03 §11: timeout must not lose original complaint
   });
 
-  if (!aiResult.success) {
-    // AI call failed (timeout, API error, etc.)
-    // Return fallback — complaint will still be saved, just unrouted
-    console.warn("[CivicPulse AI] analyzeComplaint: AI call failed.", aiResult.error);
+  if (!geminiResult.success) {
+    // PRD-03 §11: AI failure — mark as failed, preserve complaint with fallback
+    console.warn(
+      "[CivicPulse AI] analyzeComplaint: provider call failed.",
+      geminiResult.error
+    );
     return {
       analysis: AI_ANALYSIS_FALLBACK,
       fromAI: false,
-      errorMessage: aiResult.error,
+      errorMessage: geminiResult.error,
     };
   }
 
-  // 3. Parse & validate the raw model output
+  // Step 5: Validate result against AIAnalysisSchema (PRD-03 §3.2, §4.1)
   try {
-    const rawAnalysis = parseAndValidate(aiResult.rawText);
+    const rawAnalysis = parseAndValidate(geminiResult.rawText);
 
-    // 4. Enforce deterministic business rules on top of AI output
-    const analysis = enforceBusinessRules(rawAnalysis);
+    // Steps 6–9: Apply routing rules, review triggers, safety overrides
+    const analysis = enforceReviewRules(rawAnalysis);
 
     return {
       analysis,
       fromAI: true,
-      rawModelOutput: aiResult.rawText,
+      modelName: geminiResult.modelName,
+      processedAt: geminiResult.processedAt,
+      rawModelOutput: geminiResult.rawText,
     };
   } catch (err) {
-    // JSON parse error or Zod validation failure
-    let errorMessage = "Unknown parse error";
+    // PRD-03 §4.1: reject invalid/incomplete output — log and use fallback
+    let errorMessage = "Unknown validation error";
 
     if (err instanceof SyntaxError) {
       errorMessage = `JSON parse error: ${err.message}`;
     } else if (err instanceof ZodError) {
-      // Log Zod validation issues for debugging — do NOT expose to client
+      // Log Zod issues server-side only — never expose to client
       const issues = err.errors
         .map((e) => `${e.path.join(".")}: ${e.message}`)
         .join("; ");
@@ -173,13 +239,15 @@ export async function analyzeComplaint(
       errorMessage = err.message;
     }
 
-    console.error("[CivicPulse AI] analyzeComplaint: validation failed.", errorMessage);
-    console.error("[CivicPulse AI] Raw model output was:", aiResult.rawText);
+    console.error(
+      "[CivicPulse AI] analyzeComplaint: validation failed.",
+      errorMessage
+    );
 
     return {
       analysis: AI_ANALYSIS_FALLBACK,
       fromAI: false,
-      rawModelOutput: aiResult.rawText,
+      rawModelOutput: geminiResult.rawText,
       errorMessage,
     };
   }

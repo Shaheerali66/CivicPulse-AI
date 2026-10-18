@@ -1,18 +1,18 @@
 /**
  * src/lib/ai/client.ts
  *
- * PRD-03 :: AI Engine — Server-side LLM client wrapper (Google Gemini).
- * Uses the official @google/generative-ai SDK with vision support.
+ * PRD-03 §3.1, §3.3 — Server-side Google Gemini client wrapper.
+ * Vision-capable LLM integration using @google/generative-ai SDK.
  *
- * "server-only" import ensures this module CANNOT be bundled into client code.
- * Next.js will throw a build error if any client component imports this.
+ * "server-only" import is a hard build-time guard — any client component
+ * importing this will fail at Next.js build time (PRD-03 §3.3).
  *
- * Env vars required (set in .env.local, never committed):
- *   AI_API_KEY  — your Google AI Studio API key
- *   AI_MODEL    — model name, e.g., "gemini-1.5-pro" (default)
+ * Required environment variables (never expose to client):
+ *   AI_API_KEY  — Google AI Studio API key
+ *   AI_MODEL    — model name (default: "gemini-1.5-pro")
  */
 
-import "server-only"; // Hard guard: client bundle build fails if imported
+import "server-only"; // PRD-03 §3.3: AI credentials must remain server-only
 
 import {
   GoogleGenerativeAI,
@@ -24,28 +24,26 @@ import {
 } from "@google/generative-ai";
 
 // ---------------------------------------------------------------------------
-// Environment validation — fail loudly at startup on the server, not at
-// request time, so misconfiguration is caught before deployment.
+// Environment validation — startup mein fail karo taake deploy se pehle pata chale
 // ---------------------------------------------------------------------------
 function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) {
     throw new Error(
-      `[CivicPulse AI] Missing required environment variable: ${name}. ` +
-        `Check your .env.local file and server environment.`
+      `[CivicPulse AI] Missing required server env variable: "${name}". ` +
+        `Set it in .env.local — never expose to client.`
     );
   }
   return value;
 }
 
 // ---------------------------------------------------------------------------
-// Lazy singleton — model is instantiated once per server cold start.
-// We defer validation to the first call so the server can boot even without
-// the key set during local development if AI features are not exercised.
+// Lazy singleton — model instance per server cold start
+// Defer key validation so server boots even without key in non-AI dev modes
 // ---------------------------------------------------------------------------
 let _model: GenerativeModel | null = null;
 
-function getModel(): GenerativeModel {
+export function getGeminiModel(): GenerativeModel {
   if (_model) return _model;
 
   const apiKey = requireEnv("AI_API_KEY");
@@ -55,7 +53,7 @@ function getModel(): GenerativeModel {
 
   _model = genAI.getGenerativeModel({
     model: modelName,
-    // Safety settings — block harmful content, allow civic complaints
+    // PRD-03 §5.3: block harmful content; allow civic complaint descriptions
     safetySettings: [
       {
         category: HarmCategory.HARM_CATEGORY_HARASSMENT,
@@ -80,78 +78,64 @@ function getModel(): GenerativeModel {
 }
 
 // ---------------------------------------------------------------------------
-// Public types for call-site usage
+// Public types
 // ---------------------------------------------------------------------------
-export interface AIClientImagePart {
-  /** Base64-encoded image data (without the data: prefix) */
+export interface GeminiImageInput {
+  /** Base64-encoded image bytes — do NOT include the data URI prefix */
   base64Data: string;
-  /** MIME type of the image, e.g., "image/jpeg", "image/png" */
-  mimeType: string;
+  /** MIME type validated before sending, e.g., "image/jpeg" (PRD-03 §5.4) */
+  mimeType: "image/jpeg" | "image/png" | "image/webp" | "image/gif";
 }
 
-export interface AIClientRequestParams {
+export interface GeminiRequestParams {
   systemInstruction: string;
   userMessage: string;
-  image?: AIClientImagePart;
-  /** Request timeout in milliseconds. Default: 30_000 (30 seconds) */
+  image?: GeminiImageInput;
+  /** Request timeout ms. Default 30_000. PRD-03 §11: must not lose complaint on timeout. */
   timeoutMs?: number;
 }
 
-export interface AIClientResponse {
-  /** Raw JSON string from the model */
-  rawText: string;
-  /** True if the call succeeded without errors */
-  success: true;
-}
-
-export interface AIClientError {
-  success: false;
-  error: string;
-}
-
-export type AIClientResult = AIClientResponse | AIClientError;
+export type GeminiResult =
+  | { success: true; rawText: string; modelName: string; processedAt: string }
+  | { success: false; error: string };
 
 // ---------------------------------------------------------------------------
-// Core function — calls Gemini with optional image, returns raw JSON text
+// Core client call — returns raw text for schema validation upstream
+// PRD-03 §4.1: validate provider response with Zod (done in analyze-complaint.ts)
 // ---------------------------------------------------------------------------
-export async function callAIModel(
-  params: AIClientRequestParams
-): Promise<AIClientResult> {
+export async function callGemini(params: GeminiRequestParams): Promise<GeminiResult> {
   const { systemInstruction, userMessage, image, timeoutMs = 30_000 } = params;
 
-  // Build the content parts array (text + optional image)
+  // Build multimodal content parts — image first if present (PRD-03 §5.4)
   const parts: (TextPart | InlineDataPart)[] = [];
 
   if (image) {
     parts.push({
-      inlineData: {
-        data: image.base64Data,
-        mimeType: image.mimeType,
-      },
+      inlineData: { data: image.base64Data, mimeType: image.mimeType },
     } satisfies InlineDataPart);
   }
 
   parts.push({ text: userMessage } satisfies TextPart);
 
   try {
-    const model = getModel();
+    const model = getGeminiModel();
+    const modelName = process.env["AI_MODEL"] ?? "gemini-1.5-pro";
 
-    // Race between the AI request and a manual timeout
+    // Race AI call against timeout — PRD-03 §11: timeouts must not lose complaint
     const result = await Promise.race([
       model.generateContent({
         systemInstruction,
         contents: [{ role: "user", parts }],
         generationConfig: {
-          // Force JSON output mode — reduces hallucinated markdown wrapping
-          responseMimeType: "application/json",
-          temperature: 0.1,   // Low temperature for deterministic classification
+          responseMimeType: "application/json", // structured output mode
+          temperature: 0.1,    // low temp for deterministic classification
           topP: 0.8,
-          maxOutputTokens: 1024,
+          maxOutputTokens: 1024, // PRD-03 §13: bound output size
         },
       }),
       new Promise<never>((_, reject) =>
         setTimeout(
-          () => reject(new Error(`AI request timed out after ${timeoutMs}ms`)),
+          () => reject(new Error(`Gemini request timed out after ${timeoutMs}ms`)),
           timeoutMs
         )
       ),
@@ -160,16 +144,19 @@ export async function callAIModel(
     const rawText = result.response.text().trim();
 
     if (!rawText) {
-      return {
-        success: false,
-        error: "AI returned an empty response.",
-      };
+      return { success: false, error: "Gemini returned an empty response." };
     }
 
-    return { success: true, rawText };
+    return {
+      success: true,
+      rawText,
+      modelName,
+      processedAt: new Date().toISOString(), // PRD-03 §4.1: record processing timestamp
+    };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error("[CivicPulse AI] callAIModel error:", message);
+    // PRD-03 §13: log metadata, not raw prompts or images
+    console.error("[CivicPulse AI] callGemini error:", message);
     return { success: false, error: message };
   }
 }
