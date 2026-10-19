@@ -128,9 +128,20 @@ SET
   updated_at = now();
 
 -- ----------------------------------------------------------------------------
--- 3. Public Complaint Submission RLS Policy
+-- 3. Public Complaint Submission & Tracking RLS Policy
 -- ----------------------------------------------------------------------------
 DROP POLICY IF EXISTS "Enable insert for all users" ON "public"."complaints";
+DROP POLICY IF EXISTS "Allow public complaint submission" ON "public"."complaints";
 DROP POLICY IF EXISTS "complaints_insert_citizen" ON "public"."complaints";
-CREATE POLICY "Enable insert for all users" ON "public"."complaints" FOR INSERT WITH CHECK (true);
+DROP POLICY IF EXISTS "Allow public complaint tracking" ON "public"."complaints";
+
+CREATE POLICY "Allow public complaint submission"
+ON public.complaints FOR INSERT
+TO anon, authenticated, service_role
+WITH CHECK (true);
+
+CREATE POLICY "Allow public complaint tracking"
+ON public.complaints FOR SELECT
+TO anon, authenticated, service_role
+USING (true);
 
