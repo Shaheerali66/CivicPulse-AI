@@ -2,8 +2,8 @@
  * src/components/navigation/header.tsx
  *
  * PRD-04 :: Navigation & Application Header
- * Consistent navigation across Officer and Admin surfaces.
- * Solid colors only (no gradients), Lucide icons, notifications, and Log Out.
+ * Officer / Admin surface header with Log Out button.
+ * Uses Supabase browser client to clear auth session, then redirects to login.
  */
 
 "use client";
@@ -13,6 +13,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Layers, Settings, FilePlus, Search, LogOut } from "lucide-react";
 import { NotificationsPopover } from "@/components/notifications/notifications-popover";
+import { createClient } from "@/lib/supabase/client";
 
 interface AppHeaderProps {
   onSelectComplaint?: (complaintId: string) => void;
@@ -49,14 +50,16 @@ export function AppHeader({ onSelectComplaint }: AppHeaderProps) {
     },
   ];
 
-  async function handleLogOut() {
+  const handleLogOut = async () => {
     try {
-      await fetch("/api/auth/signout", { method: "POST" });
+      const supabase = createClient();
+      await supabase.auth.signOut();
     } catch {
-      // ignore network errors — still redirect
+      // session may already be invalid — still redirect
     }
     router.push("/auth/login");
-  }
+    router.refresh();
+  };
 
   return (
     <header className="bg-white border-b border-slate-200 sticky top-0 z-40">
@@ -104,7 +107,7 @@ export function AppHeader({ onSelectComplaint }: AppHeaderProps) {
             <button
               type="button"
               onClick={handleLogOut}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-slate-200 bg-slate-50 hover:bg-red-50 hover:border-red-200 hover:text-red-600 text-slate-600 text-xs font-semibold transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-slate-200 bg-slate-50 hover:bg-red-50 hover:border-red-200 hover:text-red-600 text-slate-600 text-xs font-semibold transition-colors cursor-pointer"
             >
               <LogOut className="w-3.5 h-3.5" />
               Log Out
