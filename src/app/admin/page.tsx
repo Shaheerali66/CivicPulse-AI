@@ -27,14 +27,9 @@ import { MembershipManager } from "@/components/admin/membership-manager";
 
 export default function AdminDashboardPage() {
   const [activeTab, setActiveTab] = useState<"analytics" | "departments" | "members">("analytics");
-  const [currentRole, setCurrentRole] = useState<"officer" | "reviewer" | "admin" | "citizen">("admin");
-
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans">
-      <AppHeader
-        currentRole={currentRole}
-        onRoleSwitch={setCurrentRole}
-      />
+      <AppHeader />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
         {/* Admin Header */}
