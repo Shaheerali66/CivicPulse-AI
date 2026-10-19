@@ -2,33 +2,25 @@
  * src/components/navigation/header.tsx
  *
  * PRD-04 :: Navigation & Application Header
- * Consistent navigation across Officer, Admin, and Citizen surfaces.
- * Solid colors only (no gradients), Lucide icons, role indicators,
- * and integrated in-app notifications.
+ * Consistent navigation across Officer and Admin surfaces.
+ * Solid colors only (no gradients), Lucide icons, notifications, and Log Out.
  */
 
 "use client";
 
 import React from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import {
-  Layers,
-  Settings,
-  FilePlus,
-  Search,
-  UserPlus,
-} from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import { Layers, Settings, FilePlus, Search, LogOut } from "lucide-react";
 import { NotificationsPopover } from "@/components/notifications/notifications-popover";
 
 interface AppHeaderProps {
   onSelectComplaint?: (complaintId: string) => void;
 }
 
-export function AppHeader({
-  onSelectComplaint,
-}: AppHeaderProps) {
+export function AppHeader({ onSelectComplaint }: AppHeaderProps) {
   const pathname = usePathname();
+  const router = useRouter();
 
   const navLinks = [
     {
@@ -57,11 +49,20 @@ export function AppHeader({
     },
   ];
 
+  async function handleLogOut() {
+    try {
+      await fetch("/api/auth/signout", { method: "POST" });
+    } catch {
+      // ignore network errors — still redirect
+    }
+    router.push("/auth/login");
+  }
+
   return (
     <header className="bg-white border-b border-slate-200 sticky top-0 z-40">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-14">
-          {/* Logo and Brand */}
+          {/* Logo */}
           <div className="flex items-center gap-6">
             <Link href="/" className="flex items-center gap-2.5">
               <div className="w-7 h-7 bg-blue-600 rounded flex items-center justify-center text-white font-bold text-sm">
@@ -96,19 +97,18 @@ export function AppHeader({
             </nav>
           </div>
 
-          {/* Right actions: Notifications & Sign Up */}
+          {/* Right: Notifications + Log Out */}
           <div className="flex items-center gap-3">
-            {/* Notifications Popover */}
             <NotificationsPopover onSelectComplaint={onSelectComplaint} />
 
-            {/* Sign Up Button */}
-            <Link
-              href="/auth/sign-up"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition-colors"
+            <button
+              type="button"
+              onClick={handleLogOut}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-slate-200 bg-slate-50 hover:bg-red-50 hover:border-red-200 hover:text-red-600 text-slate-600 text-xs font-semibold transition-colors"
             >
-              <UserPlus className="w-3.5 h-3.5" />
-              Sign Up
-            </Link>
+              <LogOut className="w-3.5 h-3.5" />
+              Log Out
+            </button>
           </div>
         </div>
       </div>
