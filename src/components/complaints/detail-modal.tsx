@@ -96,9 +96,10 @@ export function ComplaintDetailModal({
         throw new Error("Failed to load complaint details");
       }
       const json = await res.json();
-      if (json.success && json.data) {
-        setComplaint(json.data);
-        setSelectedDeptId(json.data.department_id || "");
+      const complaintData = json.data || json.complaint;
+      if (complaintData) {
+        setComplaint(complaintData);
+        setSelectedDeptId(complaintData.department_id || "");
       } else {
         throw new Error(json.error || "Complaint not found");
       }

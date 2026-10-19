@@ -1,236 +1,288 @@
 /**
  * src/app/api/complaints/[id]/route.ts
  *
- * PRD-04 :: API — GET /api/complaints/[id]
+ * GET /api/complaints/[id] & PATCH /api/complaints/[id]
  *
- * Supports BOTH:
- * 1. Public Tracking Lookup: Anyone with a tracking ID (e.g. CP-20261018-XXXX)
- *    can view official public status without requiring authentication.
- * 2. Officer / Admin Operational Lookup: Provides full detail relations, events,
- *    and AI analysis for DetailModal and staff workflow.
+ * Supports lookup by:
+ * 1. UUID (complaint primary key id)
+ * 2. tracking_code (e.g. "CP-20261019-00TE")
+ * 3. tracking_id (alternative column name in database schemas)
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentUserWithProfile } from "@/lib/auth/session";
-import { errorResponse, handleRouteError } from "@/lib/api/error-response";
 import { COMPLAINT_CATEGORIES, COMPLAINT_STATUS_LABELS, type ComplaintStatus } from "@/types/complaint";
 
 export async function GET(
-  _request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  request: Request | NextRequest,
+  { params }: { params: Promise<{ id: string }> | { id: string } }
 ) {
   try {
-    const { id: rawId } = await params;
-    const queryId = decodeURIComponent(rawId || "").trim();
+    const resolvedParams = await Promise.resolve(params);
+    const rawId = resolvedParams?.id;
+    const id = decodeURIComponent(rawId || "").trim();
 
-    if (!queryId) {
-      return errorResponse("Tracking ID or Complaint ID is required.", 400, "BAD_REQUEST");
+    if (!id) {
+      return NextResponse.json(
+        { error: "Complaint identifier or tracking code is required." },
+        { status: 400 }
+      );
     }
 
-    const isUuid =
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(queryId);
-
-    // Optional user session (non-blocking for public tracking)
-    let authUser = null;
-    let authProfile = null;
-    try {
-      const auth = await getCurrentUserWithProfile();
-      authUser = auth?.user ?? null;
-      authProfile = auth?.profile ?? null;
-    } catch {
-      // Unauthenticated access is allowed for tracking
-      authUser = null;
-      authProfile = null;
-    }
-
-    // Always use admin client for resilient public status lookup
+    const supabase = await createServerSupabaseClient();
     const admin = createAdminClient();
 
-    // Query complaint record
-    let query = admin
-      .from("complaints")
-      .select(
-        `
-        id, tracking_id, citizen_id, title, description, category,
-        status, priority, submission_method, department_id,
-        assigned_to, latitude, longitude, location_label, photo_path,
-        is_public, submitted_at, updated_at, resolved_at, closed_at,
-        department:departments(id, name, slug)
-        `
-      );
+    // Check if the parameter is a valid UUID format
+    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 
-    if (isUuid) {
-      query = query.eq("id", queryId);
-    } else {
-      query = query.eq("tracking_id", queryId);
-    }
+    let data: any = null;
+    let queryError: any = null;
 
-    const { data: complaint, error: fetchErr } = await query.maybeSingle();
+    // 1. If UUID, query complaints by primary key 'id'
+    if (isUUID) {
+      const res = await supabase.from("complaints").select("*").eq("id", id).maybeSingle();
+      data = res.data;
+      queryError = res.error;
 
-    if (fetchErr) {
-      console.error("[CivicPulse API] Complaint query error:", fetchErr.message);
-      return errorResponse("Failed to query complaint record.", 500, "DB_ERROR");
-    }
-
-    if (!complaint) {
-      return errorResponse(
-        `No complaint found with identifier "${queryId}". Please verify your Tracking ID.`,
-        404,
-        "NOT_FOUND"
-      );
-    }
-
-    // Load AI analysis record if available
-    const { data: aiRecord } = await admin
-      .from("ai_analyses")
-      .select("*")
-      .eq("complaint_id", complaint.id)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    // Load timeline events
-    const { data: events } = await admin
-      .from("complaint_events")
-      .select("id, complaint_id, actor_id, event_type, previous_value, new_value, note, created_at")
-      .eq("complaint_id", complaint.id)
-      .order("created_at", { ascending: true });
-
-    // Load assigned officer profile if assigned
-    let assignedOfficer: { id: string; display_name: string | null; full_name?: string | null; role?: string } | null = null;
-    if (complaint.assigned_to) {
-      const { data: officer } = await admin
-        .from("profiles")
-        .select("id, display_name, role")
-        .eq("id", complaint.assigned_to)
-        .maybeSingle();
-      if (officer) {
-        assignedOfficer = {
-          id: officer.id,
-          display_name: officer.display_name,
-          full_name: officer.display_name,
-          role: officer.role,
-        };
+      // Fallback to admin client if RLS blocked unauthenticated lookup
+      if (!data && !queryError) {
+        const adminRes = await admin.from("complaints").select("*").eq("id", id).maybeSingle();
+        data = adminRes.data;
       }
     }
 
-    // Resolve department representation
-    const deptObj = Array.isArray(complaint.department)
-      ? complaint.department[0]
-      : complaint.department;
-    const departmentName = deptObj?.name || "Municipal Services";
+    // 2. Search by tracking_code (e.g. CP-20261019-00TE)
+    if (!data) {
+      try {
+        const res = await supabase.from("complaints").select("*").eq("tracking_code", id).maybeSingle();
+        if (res.data) data = res.data;
+      } catch {
+        // column tracking_code might not exist in some schemas
+      }
+
+      if (!data) {
+        try {
+          const adminRes = await admin.from("complaints").select("*").eq("tracking_code", id).maybeSingle();
+          if (adminRes.data) data = adminRes.data;
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    // 3. Search by tracking_id (standard schema column)
+    if (!data) {
+      try {
+        const res = await supabase.from("complaints").select("*").eq("tracking_id", id).maybeSingle();
+        if (res.data) data = res.data;
+      } catch {
+        // column tracking_id might not exist in some schemas
+      }
+
+      if (!data) {
+        try {
+          const adminRes = await admin.from("complaints").select("*").eq("tracking_id", id).maybeSingle();
+          if (adminRes.data) data = adminRes.data;
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    // 4. Fallback: search across both columns using OR
+    if (!data) {
+      if (isUUID) {
+        try {
+          const res = await supabase
+            .from("complaints")
+            .select("*")
+            .or(`id.eq.${id},tracking_code.eq.${id}`)
+            .maybeSingle();
+          if (res.data) data = res.data;
+        } catch {}
+
+        if (!data) {
+          try {
+            const res = await supabase
+              .from("complaints")
+              .select("*")
+              .or(`id.eq.${id},tracking_id.eq.${id}`)
+              .maybeSingle();
+            if (res.data) data = res.data;
+          } catch {}
+        }
+      }
+    }
+
+    if (!data) {
+      return NextResponse.json(
+        { error: `Complaint not found with identifier "${id}"` },
+        { status: 404 }
+      );
+    }
+
+    // Normalize identifier fields across tracking_code / tracking_id
+    const trackingCode = data.tracking_code || data.tracking_id || id;
+    data.tracking_code = trackingCode;
+    data.tracking_id = trackingCode;
+    data.trackingId = trackingCode;
+    data.priority_band = data.priority_band || data.priority || "medium";
+    data.priority_score = data.priority_score || 50;
+
+    // Load AI analysis record if available
+    let aiRecord = null;
+    try {
+      const { data: ai } = await admin
+        .from("ai_analyses")
+        .select("*")
+        .eq("complaint_id", data.id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      aiRecord = ai;
+    } catch {}
+
+    // Load timeline events
+    let events: any[] = [];
+    try {
+      const { data: evList } = await admin
+        .from("complaint_events")
+        .select("id, complaint_id, actor_id, event_type, previous_value, new_value, note, created_at")
+        .eq("complaint_id", data.id)
+        .order("created_at", { ascending: true });
+      events = evList || [];
+    } catch {}
+
+    // Load department details if available
+    let departmentName = "Municipal Services";
+    let deptObj = data.department || null;
+    if (data.department_id) {
+      try {
+        const { data: dept } = await admin
+          .from("departments")
+          .select("id, name, slug")
+          .eq("id", data.department_id)
+          .maybeSingle();
+        if (dept) {
+          deptObj = dept;
+          departmentName = dept.name;
+        }
+      } catch {}
+    }
+
+    // Load assigned officer profile if assigned
+    let assignedOfficer: { id: string; display_name: string | null; full_name?: string | null; role?: string } | null = null;
+    if (data.assigned_to) {
+      try {
+        const { data: officer } = await admin
+          .from("profiles")
+          .select("id, display_name, role")
+          .eq("id", data.assigned_to)
+          .maybeSingle();
+        if (officer) {
+          assignedOfficer = {
+            id: officer.id,
+            display_name: officer.display_name,
+            full_name: officer.display_name,
+            role: officer.role,
+          };
+        }
+      } catch {}
+    }
 
     // Category label
-    const catEntry = COMPLAINT_CATEGORIES.find((c) => c.id === complaint.category);
-    const categoryLabel = catEntry ? catEntry.label : complaint.category || "General";
+    const catEntry = COMPLAINT_CATEGORIES.find((c) => c.id === data.category);
+    const categoryLabel = catEntry ? catEntry.label : data.category || "General";
 
     // AI summary
     const summaryText =
       aiRecord?.summary ||
-      complaint.title ||
-      complaint.description.slice(0, 140);
+      data.title ||
+      (typeof data.description === "string" ? data.description.slice(0, 140) : "Civic Complaint");
 
     // Formatted history for PublicTrackingResponse
-    const historyList = (events ?? []).map((ev: any) => ({
-      status: (ev.new_value?.status as ComplaintStatus) || (complaint.status as ComplaintStatus),
+    const historyList = events.map((ev: any) => ({
+      status: (ev.new_value?.status as ComplaintStatus) || (data.status as ComplaintStatus),
       label: formatEventLabel(ev.event_type),
       timestamp: ev.created_at,
       notes: ev.note || (ev.new_value?.notes as string) || undefined,
     }));
 
-    // If no events exist yet, provide default initial submission event
     if (historyList.length === 0) {
       historyList.push({
-        status: (complaint.status as ComplaintStatus) || "submitted",
+        status: (data.status as ComplaintStatus) || "submitted",
         label: "Complaint Submitted & Recorded",
-        timestamp: complaint.submitted_at || new Date().toISOString(),
+        timestamp: data.submitted_at || data.created_at || new Date().toISOString(),
         notes: "Received into CivicPulse AI intake queue.",
       });
     }
 
-    // Full relation object for DetailModal
-    const fullDetail = {
-      id: complaint.id,
-      tracking_id: complaint.tracking_id,
-      trackingId: complaint.tracking_id,
-      title: complaint.title,
-      description: complaint.description,
-      category: complaint.category,
-      categoryLabel,
-      status: complaint.status as ComplaintStatus,
-      priority: complaint.priority,
-      priority_band: complaint.priority,
-      priority_score: aiRecord?.confidence ? Math.round(aiRecord.confidence * 100) : 50,
-      submission_method: complaint.submission_method,
-      department_id: complaint.department_id,
-      department: deptObj || { id: complaint.department_id || "dept", name: departmentName, slug: "dept" },
-      assigned_to: complaint.assigned_to,
-      assigned_officer: assignedOfficer,
-      submitter: null,
-      latitude: complaint.latitude,
-      longitude: complaint.longitude,
-      location_label: complaint.location_label,
-      photo_path: complaint.photo_path,
-      photo_url: complaint.photo_path?.startsWith("http") ? complaint.photo_path : null,
-      is_public: complaint.is_public,
-      submitted_at: complaint.submitted_at,
-      created_at: complaint.submitted_at,
-      updated_at: complaint.updated_at,
-      resolved_at: complaint.resolved_at,
-      closed_at: complaint.closed_at,
-      ai_analysis: aiRecord
-        ? {
-            category: aiRecord.category,
-            summary: aiRecord.summary,
-            severity: aiRecord.severity,
-            confidence: Number(aiRecord.confidence) || 0.8,
-            suggested_department_category: aiRecord.suggested_department_category || departmentName,
-            safety_concern: Boolean(aiRecord.safety_concern),
-            needs_human_review: Boolean(aiRecord.needs_human_review),
-            reasoning: aiRecord.reasoning_summary || "",
-          }
-        : null,
-      safety_concern: Boolean(aiRecord?.safety_concern),
-      needs_human_review: Boolean(aiRecord?.needs_human_review),
-      events: events ?? [],
-      duplicate_candidates: [],
-    };
+    // Attach enriched fields to data
+    data.department = deptObj || { id: data.department_id || "dept", name: departmentName, slug: "dept" };
+    data.assigned_officer = assignedOfficer;
+    data.categoryLabel = categoryLabel;
+    data.events = events;
+    data.duplicate_candidates = data.duplicate_candidates || [];
+    data.ai_analysis = aiRecord
+      ? {
+          category: aiRecord.category,
+          summary: aiRecord.summary,
+          severity: aiRecord.severity,
+          confidence: Number(aiRecord.confidence) || 0.8,
+          suggested_department_category: aiRecord.suggested_department_category || departmentName,
+          safety_concern: Boolean(aiRecord.safety_concern),
+          needs_human_review: Boolean(aiRecord.needs_human_review),
+          reasoning: aiRecord.reasoning_summary || "",
+        }
+      : null;
+    data.safety_concern = Boolean(aiRecord?.safety_concern || data.safety_concern);
+    data.needs_human_review = Boolean(aiRecord?.needs_human_review || data.needs_human_review);
 
-    // Response satisfies BOTH PublicTrackingResponse (flat) AND ApiResponse (nested under data)
+    // Return payload satisfying { complaint }, { data }, and flat public tracking response
     return NextResponse.json(
       {
         success: true,
-        trackingId: complaint.tracking_id,
-        status: complaint.status as ComplaintStatus,
-        statusLabel: COMPLAINT_STATUS_LABELS[complaint.status as ComplaintStatus] || complaint.status,
-        category: complaint.category,
+        complaint: data,
+        data: data,
+        trackingId: trackingCode,
+        status: data.status as ComplaintStatus,
+        statusLabel: COMPLAINT_STATUS_LABELS[data.status as ComplaintStatus] || data.status,
+        category: data.category,
         categoryLabel,
         department: departmentName,
         summary: summaryText,
-        createdAt: complaint.submitted_at,
-        updatedAt: complaint.updated_at,
-        needsHumanReview: Boolean(aiRecord?.needs_human_review),
+        createdAt: data.submitted_at || data.created_at,
+        updatedAt: data.updated_at,
+        needsHumanReview: data.needs_human_review,
         history: historyList,
-        data: fullDetail,
       },
       { status: 200 }
     );
-  } catch (err) {
-    return handleRouteError(err);
+  } catch (err: any) {
+    console.error("[CivicPulse API] Complaint lookup error:", err);
+    return NextResponse.json(
+      { error: err.message || "Internal Server Error" },
+      { status: 500 }
+    );
   }
 }
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> | { id: string } }
 ) {
   try {
-    const { id: rawId } = await params;
+    const resolvedParams = await Promise.resolve(params);
+    const rawId = resolvedParams?.id;
     const queryId = decodeURIComponent(rawId || "").trim();
 
     if (!queryId) {
-      return errorResponse("Tracking ID or Complaint ID is required.", 400, "BAD_REQUEST");
+      return NextResponse.json(
+        { error: "Tracking ID or Complaint ID is required." },
+        { status: 400 }
+      );
     }
 
     const isUuid =
@@ -246,21 +298,33 @@ export async function PATCH(
 
     const admin = createAdminClient();
 
-    // 1. Fetch current complaint
-    let query = admin
-      .from("complaints")
-      .select("id, tracking_id, status, department_id, priority, category, assigned_to");
+    // 1. Fetch current complaint by UUID, tracking_code, or tracking_id
+    let complaint: any = null;
 
     if (isUuid) {
-      query = query.eq("id", queryId);
-    } else {
-      query = query.eq("tracking_id", queryId);
+      const res = await admin.from("complaints").select("*").eq("id", queryId).maybeSingle();
+      complaint = res.data;
     }
 
-    const { data: complaint, error: fetchErr } = await query.maybeSingle();
+    if (!complaint) {
+      try {
+        const res = await admin.from("complaints").select("*").eq("tracking_code", queryId).maybeSingle();
+        complaint = res.data;
+      } catch {}
+    }
 
-    if (fetchErr || !complaint) {
-      return errorResponse(`Complaint "${queryId}" not found.`, 404, "NOT_FOUND");
+    if (!complaint) {
+      try {
+        const res = await admin.from("complaints").select("*").eq("tracking_id", queryId).maybeSingle();
+        complaint = res.data;
+      } catch {}
+    }
+
+    if (!complaint) {
+      return NextResponse.json(
+        { error: `Complaint "${queryId}" not found.` },
+        { status: 404 }
+      );
     }
 
     const body = await request.json();
@@ -300,7 +364,10 @@ export async function PATCH(
 
     if (updateErr) {
       console.error("[CivicPulse API] Complaint PATCH update error:", updateErr.message);
-      return errorResponse("Failed to update complaint.", 500, "DB_ERROR");
+      return NextResponse.json(
+        { error: "Failed to update complaint: " + updateErr.message },
+        { status: 500 }
+      );
     }
 
     // 3. Record timeline event in public.complaint_events
@@ -315,34 +382,44 @@ export async function PATCH(
         ? "assigned"
         : "status_changed";
 
-    await admin.from("complaint_events").insert({
-      complaint_id: complaint.id,
-      actor_id: authUser?.id ?? null,
-      event_type: eventType,
-      previous_value: {
-        status: complaint.status,
-        department_id: complaint.department_id,
-        priority: complaint.priority,
-      },
-      new_value: {
-        status: updatedComplaint.status,
-        department_id: updatedComplaint.department_id,
-        priority: updatedComplaint.priority,
-      },
-      note: noteText || `Complaint updated to ${updatedComplaint.status}`,
-      created_at: now,
-    });
+    try {
+      await admin.from("complaint_events").insert({
+        complaint_id: complaint.id,
+        actor_id: authUser?.id ?? null,
+        event_type: eventType,
+        previous_value: {
+          status: complaint.status,
+          department_id: complaint.department_id,
+          priority: complaint.priority,
+        },
+        new_value: {
+          status: updatedComplaint.status,
+          department_id: updatedComplaint.department_id,
+          priority: updatedComplaint.priority,
+        },
+        note: noteText || `Complaint updated to ${updatedComplaint.status}`,
+        created_at: now,
+      });
+    } catch (e) {
+      console.warn("[CivicPulse API] Could not record complaint event:", e);
+    }
+
+    const trackingCode = updatedComplaint.tracking_code || updatedComplaint.tracking_id || complaint.tracking_id || queryId;
 
     return NextResponse.json(
       {
         success: true,
+        complaint: updatedComplaint,
         data: updatedComplaint,
-        message: `Complaint ${complaint.tracking_id} successfully updated.`,
+        message: `Complaint ${trackingCode} successfully updated.`,
       },
       { status: 200 }
     );
-  } catch (err) {
-    return handleRouteError(err);
+  } catch (err: any) {
+    return NextResponse.json(
+      { error: err.message || "Internal Server Error" },
+      { status: 500 }
+    );
   }
 }
 
@@ -363,6 +440,6 @@ function formatEventLabel(eventType: string): string {
     case "closed":
       return "Case Closed";
     default:
-      return eventType.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+      return eventType ? eventType.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "Update";
   }
 }

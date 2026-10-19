@@ -50,7 +50,26 @@ function TrackContent() {
         throw new Error(data.error || "No complaint found with this Tracking ID.");
       }
 
-      setComplaint(data);
+      const comp = data.complaint || data.data || data;
+      const normalized = {
+        ...comp,
+        ...data,
+        trackingId: data.trackingId || comp.tracking_code || comp.tracking_id || comp.id || idToSearch.trim(),
+        status: data.status || comp.status || "submitted",
+        category: data.category || comp.category || "unknown",
+        categoryLabel: data.categoryLabel || comp.categoryLabel || comp.category || "General",
+        department: typeof data.department === "string" ? data.department : (comp.department?.name || comp.department || "Municipal Services"),
+        summary: data.summary || comp.summary || comp.description || comp.title || "Complaint filed.",
+        history: data.history || comp.events || [
+          {
+            status: comp.status || "submitted",
+            label: "Complaint Submitted & Recorded",
+            timestamp: comp.submitted_at || comp.created_at || new Date().toISOString(),
+          }
+        ],
+      };
+
+      setComplaint(normalized as any);
     } catch (err: any) {
       setError(err.message || "Unable to retrieve tracking details.");
     } finally {
