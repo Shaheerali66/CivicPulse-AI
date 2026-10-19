@@ -350,7 +350,7 @@ export function ComplaintDetailModal({
               <p className="text-sm font-semibold text-rose-900">{error || "Complaint not found"}</p>
               <button
                 type="button"
-                onClick={fetchDetail}
+                onClick={() => fetchDetail()}
                 className="mt-3 px-4 py-1.5 bg-rose-600 text-white rounded text-xs font-medium hover:bg-rose-700"
               >
                 Retry
@@ -423,7 +423,7 @@ export function ComplaintDetailModal({
                     </h4>
                     <button
                       type="button"
-                      onClick={handleReanalyze}
+                      onClick={() => handleReanalyze()}
                       disabled={analyzing}
                       className="inline-flex items-center gap-1 text-[11px] text-blue-700 hover:text-blue-900 font-medium disabled:opacity-50"
                       title="Re-run AI Analysis"
