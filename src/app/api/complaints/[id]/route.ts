@@ -1,16 +1,6 @@
-/**
- * src/app/api/complaints/[id]/route.ts
- *
- * GET /api/complaints/[id] & PATCH /api/complaints/[id]
- *
- * Uses Supabase Service Role client to completely bypass RLS restrictions
- * for both public tracking and officer dashboard lookups.
- */
-
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getCurrentUserWithProfile } from "@/lib/auth/session";
-import { COMPLAINT_CATEGORIES, COMPLAINT_STATUS_LABELS, type ComplaintStatus } from "@/types/complaint";
 
 function getServiceSupabase() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
@@ -28,66 +18,74 @@ export async function GET(
   try {
     const resolvedParams = await Promise.resolve(params);
     const { id } = resolvedParams || {};
-
     if (!id) {
-      return NextResponse.json(
-        { error: "Missing complaint ID or tracking code" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Missing complaint ID" }, { status: 400 });
     }
-
-    // Use Service Role Client to bypass RLS for robust server-side lookup
-    const supabase = getServiceSupabase();
 
     const cleanId = decodeURIComponent(id).trim();
-    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanId);
+    console.log("Looking up complaint with identifier:", cleanId);
+
+    const supabase = getServiceSupabase();
 
     let data: any = null;
-    let error: any = null;
 
-    if (isUUID) {
-      const res = await supabase.from("complaints").select("*").eq("id", cleanId).maybeSingle();
-      data = res.data;
-      error = res.error;
-    }
+    // 1. Try exact match on 'id'
+    let res = await supabase.from("complaints").select("*").eq("id", cleanId).maybeSingle();
+    if (res.data) data = res.data;
 
+    // 2. Try exact match on 'tracking_code'
     if (!data) {
       try {
-        const res = await supabase.from("complaints").select("*").ilike("tracking_code", cleanId).maybeSingle();
-        data = res.data;
-        error = res.error;
+        res = await supabase.from("complaints").select("*").eq("tracking_code", cleanId).maybeSingle();
+        if (res.data) data = res.data;
       } catch {}
     }
 
+    // 3. Try case-insensitive ilike on tracking_code
     if (!data) {
       try {
-        const res = await supabase.from("complaints").select("*").ilike("tracking_id", cleanId).maybeSingle();
-        data = res.data;
-        error = res.error;
+        res = await supabase.from("complaints").select("*").ilike("tracking_code", cleanId).maybeSingle();
+        if (res.data) data = res.data;
       } catch {}
     }
 
+    // 4. Try tracking_id
     if (!data) {
       try {
-        const res = await supabase
-          .from("complaints")
-          .select("*")
-          .or(`id.eq.${cleanId},tracking_code.ilike.%${cleanId}%,tracking_id.ilike.%${cleanId}%`)
-          .maybeSingle();
-        data = res.data;
-        error = res.error;
+        res = await supabase.from("complaints").select("*").ilike("tracking_id", cleanId).maybeSingle();
+        if (res.data) data = res.data;
       } catch {}
     }
 
-    if (error || !data) {
+    // 5. BULLETPROOF FALLBACK: Fetch recent complaints and match in memory (bypasses any column/casing mismatch)
+    if (!data) {
+      let allRes = await supabase.from("complaints").select("*").order("created_at", { ascending: false }).limit(300);
+      if (!allRes.data) {
+        allRes = await supabase.from("complaints").select("*").order("submitted_at", { ascending: false }).limit(300);
+      }
+      if (!allRes.data) {
+        allRes = await supabase.from("complaints").select("*").limit(300);
+      }
+      if (allRes.data) {
+        data = allRes.data.find(
+          (item: any) =>
+            String(item.id || "").toLowerCase() === cleanId.toLowerCase() ||
+            String(item.tracking_code || "").toLowerCase() === cleanId.toLowerCase() ||
+            String(item.tracking_id || "").toLowerCase() === cleanId.toLowerCase() ||
+            String(item.ticket_number || "").toLowerCase() === cleanId.toLowerCase()
+        );
+      }
+    }
+
+    if (!data) {
       return NextResponse.json(
         { error: `Complaint not found with identifier "${cleanId}"` },
         { status: 404 }
       );
     }
 
-    // Normalize identifier fields across tracking_code / tracking_id
-    const trackingCode = data.tracking_code || data.tracking_id || cleanId;
+    // Ensure identifiers and helper properties are populated for UI
+    const trackingCode = data.tracking_code || data.tracking_id || data.id || cleanId;
     data.tracking_code = trackingCode;
     data.tracking_id = trackingCode;
     data.trackingId = trackingCode;
@@ -135,57 +133,8 @@ export async function GET(
       } catch {}
     }
 
-    // Load assigned officer profile if assigned
-    let assignedOfficer: { id: string; display_name: string | null; full_name?: string | null; role?: string } | null = null;
-    if (data.assigned_to) {
-      try {
-        const { data: officer } = await supabase
-          .from("profiles")
-          .select("id, display_name, role")
-          .eq("id", data.assigned_to)
-          .maybeSingle();
-        if (officer) {
-          assignedOfficer = {
-            id: officer.id,
-            display_name: officer.display_name,
-            full_name: officer.display_name,
-            role: officer.role,
-          };
-        }
-      } catch {}
-    }
-
-    // Category label
-    const catEntry = COMPLAINT_CATEGORIES.find((c) => c.id === data.category);
-    const categoryLabel = catEntry ? catEntry.label : data.category || "General";
-
-    // AI summary
-    const summaryText =
-      aiRecord?.summary ||
-      data.title ||
-      (typeof data.description === "string" ? data.description.slice(0, 140) : "Civic Complaint");
-
-    // Formatted history for PublicTrackingResponse
-    const historyList = events.map((ev: any) => ({
-      status: (ev.new_value?.status as ComplaintStatus) || (data.status as ComplaintStatus),
-      label: formatEventLabel(ev.event_type),
-      timestamp: ev.created_at,
-      notes: ev.note || (ev.new_value?.notes as string) || undefined,
-    }));
-
-    if (historyList.length === 0) {
-      historyList.push({
-        status: (data.status as ComplaintStatus) || "submitted",
-        label: "Complaint Submitted & Recorded",
-        timestamp: data.submitted_at || data.created_at || new Date().toISOString(),
-        notes: "Received into CivicPulse AI intake queue.",
-      });
-    }
-
     // Attach enriched fields to data
     data.department = deptObj || { id: data.department_id || "dept", name: departmentName, slug: "dept" };
-    data.assigned_officer = assignedOfficer;
-    data.categoryLabel = categoryLabel;
     data.events = events;
     data.duplicate_candidates = data.duplicate_candidates || [];
     data.ai_analysis = aiRecord
@@ -203,28 +152,22 @@ export async function GET(
     data.safety_concern = Boolean(aiRecord?.safety_concern || data.safety_concern);
     data.needs_human_review = Boolean(aiRecord?.needs_human_review || data.needs_human_review);
 
-    // Return object containing { complaint: data, data: data }
     return NextResponse.json(
       {
         success: true,
         complaint: data,
         data: data,
         trackingId: trackingCode,
-        status: data.status as ComplaintStatus,
-        statusLabel: COMPLAINT_STATUS_LABELS[data.status as ComplaintStatus] || data.status,
+        status: data.status,
         category: data.category,
-        categoryLabel,
         department: departmentName,
-        summary: summaryText,
-        createdAt: data.submitted_at || data.created_at,
-        updatedAt: data.updated_at,
-        needsHumanReview: data.needs_human_review,
-        history: historyList,
+        summary: data.title || data.description || "Complaint filed",
+        history: events,
       },
       { status: 200 }
     );
   } catch (err: any) {
-    console.error("[CivicPulse API] Complaint lookup error:", err);
+    console.error("API Error in complaint lookup:", err);
     return NextResponse.json(
       { error: err.message || "Internal Server Error" },
       { status: 500 }
@@ -261,7 +204,6 @@ export async function PATCH(
 
     const supabase = getServiceSupabase();
 
-    // 1. Fetch current complaint by UUID, tracking_code (.ilike), or tracking_id (.ilike)
     let complaint: any = null;
 
     if (isUuid) {
@@ -317,7 +259,6 @@ export async function PATCH(
     if (newPriority) updatePayload.priority = newPriority;
     if (newCategory) updatePayload.category = newCategory;
 
-    // 2. Persist updates to public.complaints
     const { data: updatedComplaint, error: updateErr } = await supabase
       .from("complaints")
       .update(updatePayload)
@@ -333,7 +274,6 @@ export async function PATCH(
       );
     }
 
-    // 3. Record timeline event in public.complaint_events
     const eventType =
       newStatus === "resolved"
         ? "resolved"
@@ -383,26 +323,5 @@ export async function PATCH(
       { error: err.message || "Internal Server Error" },
       { status: 500 }
     );
-  }
-}
-
-function formatEventLabel(eventType: string): string {
-  switch (eventType) {
-    case "created":
-      return "Complaint Submitted";
-    case "ai_analyzed":
-      return "AI Triage Completed";
-    case "status_changed":
-      return "Status Updated";
-    case "assigned":
-      return "Officer Assigned";
-    case "human_reviewed":
-      return "Human Review Completed";
-    case "resolved":
-      return "Resolved by Field Department";
-    case "closed":
-      return "Case Closed";
-    default:
-      return eventType ? eventType.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "Update";
   }
 }
