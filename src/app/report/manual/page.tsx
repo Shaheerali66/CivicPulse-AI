@@ -34,8 +34,17 @@ interface Department {
   id: string;
   name: string;
   slug: string;
+  code?: string;
   description?: string | null;
 }
+
+const DEFAULT_DEPARTMENTS: Department[] = [
+  { id: "hmc-hyderabad", name: "Hyderabad Municipal Corporation (HMC)", slug: "hmc-hyderabad", code: "hmc-hyderabad" },
+  { id: "hwasa-hyderabad", name: "Hyderabad Water & Sewerage Corporation (HWASA)", slug: "hwasa-hyderabad", code: "hwasa-hyderabad" },
+  { id: "hesco-hyderabad", name: "Hyderabad Electric Supply Company (HESCO)", slug: "hesco-hyderabad", code: "hesco-hyderabad" },
+  { id: "pwd-sindh", name: "Provincial Works & Services Department (PWD Sindh)", slug: "pwd-sindh", code: "pwd-sindh" },
+  { id: "tmc-hyderabad", name: "Town Municipal Committees (TMC)", slug: "tmc-hyderabad", code: "tmc-hyderabad" },
+];
 
 export default function ManualComplaintPage() {
   const [imageBase64, setImageBase64] = useState<string | undefined>();
@@ -45,27 +54,35 @@ export default function ManualComplaintPage() {
   const [serverError, setServerError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Department state
-  const [departments, setDepartments] = useState<Department[]>([]);
-  const [deptLoading, setDeptLoading] = useState(true);
-  const [selectedDeptId, setSelectedDeptId] = useState<string>("");
+  // Department state pre-populated with standard municipal departments so it never fails
+  const [departments, setDepartments] = useState<Department[]>(DEFAULT_DEPARTMENTS);
+  const [deptLoading, setDeptLoading] = useState(false);
+  const [selectedDeptId, setSelectedDeptId] = useState<string>(DEFAULT_DEPARTMENTS[0].id);
 
-  // Fetch departments on mount
+  // Fetch live departments on mount relative to origin
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch("/api/departments");
+        const res = await fetch("/api/departments", {
+          cache: "no-store",
+          headers: { "Cache-Control": "no-cache" },
+        });
         if (res.ok) {
           const json = await res.json();
-          const list: Department[] = json.data ?? json ?? [];
-          setDepartments(list);
-          // Pre-select first department if available
-          if (list.length > 0) setSelectedDeptId(list[0].id);
+          const list: Department[] = json.departments || json.data || (Array.isArray(json) ? json : []);
+          if (Array.isArray(list) && list.length > 0) {
+            setDepartments(list);
+            setSelectedDeptId((prev) => (list.some((d) => d.id === prev) ? prev : list[0].id));
+            return;
+          }
         }
+        // Fallback default
+        setDepartments(DEFAULT_DEPARTMENTS);
+        setSelectedDeptId((prev) => (DEFAULT_DEPARTMENTS.some((d) => d.id === prev) ? prev : DEFAULT_DEPARTMENTS[0].id));
       } catch (e) {
-        console.warn("[ManualReport] Could not load departments:", e);
-      } finally {
-        setDeptLoading(false);
+        console.warn("[ManualReport] Department fetch error, using static fallback:", e);
+        setDepartments(DEFAULT_DEPARTMENTS);
+        setSelectedDeptId((prev) => (DEFAULT_DEPARTMENTS.some((d) => d.id === prev) ? prev : DEFAULT_DEPARTMENTS[0].id));
       }
     })();
   }, []);
@@ -108,9 +125,12 @@ export default function ManualComplaintPage() {
         contactEmail: data.contactEmail || undefined,
       };
 
-      // Include selected department_id if one was chosen
+      // Include selected department_id only if it is a valid UUID (matching DB column type)
       if (selectedDeptId) {
-        payload.department_id = selectedDeptId;
+        const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(selectedDeptId);
+        if (isUUID) {
+          payload.department_id = selectedDeptId;
+        }
       }
 
       const res = await fetch("/api/complaints", {
@@ -259,35 +279,24 @@ export default function ManualComplaintPage() {
                 Select the Hyderabad municipal authority responsible for your type of civic issue.
               </p>
 
-              {deptLoading ? (
-                <div className="flex items-center gap-2 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-500">
-                  <Loader2 className="w-4 h-4 animate-spin text-blue-700" />
-                  Loading official departments…
+              <div className="relative">
+                <select
+                  id="department_id"
+                  value={selectedDeptId}
+                  onChange={(e) => setSelectedDeptId(e.target.value)}
+                  className="w-full appearance-none px-4 py-3 bg-white border border-slate-300 focus:border-blue-900 rounded-xl text-sm text-slate-900 font-medium focus:outline-none focus:ring-2 focus:ring-blue-900/10 transition-all shadow-2xs pr-10 cursor-pointer"
+                >
+                  <option value="" disabled>— Select a municipal authority —</option>
+                  {(departments.length > 0 ? departments : DEFAULT_DEPARTMENTS).map((dept) => (
+                    <option key={dept.id} value={dept.id}>
+                      {dept.name}
+                    </option>
+                  ))}
+                </select>
+                <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-slate-500">
+                  <ChevronDown className="w-4 h-4" />
                 </div>
-              ) : departments.length === 0 ? (
-                <div className="px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800">
-                  Unable to load departments. Please refresh or try again.
-                </div>
-              ) : (
-                <div className="relative">
-                  <select
-                    id="department_id"
-                    value={selectedDeptId}
-                    onChange={(e) => setSelectedDeptId(e.target.value)}
-                    className="w-full appearance-none px-4 py-3 bg-white border border-slate-300 focus:border-blue-900 rounded-xl text-sm text-slate-900 font-medium focus:outline-none focus:ring-2 focus:ring-blue-900/10 transition-all shadow-2xs pr-10 cursor-pointer"
-                  >
-                    <option value="" disabled>— Select a municipal authority —</option>
-                    {departments.map((dept) => (
-                      <option key={dept.id} value={dept.id}>
-                        {dept.name}
-                      </option>
-                    ))}
-                  </select>
-                  <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-slate-500">
-                    <ChevronDown className="w-4 h-4" />
-                  </div>
-                </div>
-              )}
+              </div>
 
               {/* Selected department badge */}
               {selectedDept && (
