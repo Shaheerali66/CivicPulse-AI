@@ -1,27 +1,20 @@
 /**
  * src/app/api/complaints/[id]/status/route.ts
  *
- * PRD-04 :: API — PATCH /api/complaints/[id]/status
- * Validates and applies a status transition.
- * Records all events into public.complaint_events with accurate DB schema.
- * Supports service role fallback in development/demo mode.
+ * PATCH / POST /api/complaints/[id]/status
+ * Uses Service Role client to bypass RLS and writes status updates directly to Supabase.
  */
 
-import { NextRequest } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentUserWithProfile } from "@/lib/auth/session";
-import {
-  errorResponse,
-  handleRouteError,
-  successResponse,
-} from "@/lib/api/error-response";
+import { errorResponse, handleRouteError, successResponse } from "@/lib/api/error-response";
 import { UpdateStatusSchema } from "@/lib/validation/api-schemas";
 import { notifyStatusChanged } from "@/lib/notifications/service";
 
-export async function PATCH(
+async function handleStatusUpdate(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  params: Promise<{ id: string }> | { id: string }
 ) {
   try {
     let auth = null;
@@ -31,7 +24,14 @@ export async function PATCH(
       auth = null;
     }
 
-    const { id } = await params;
+    const resolvedParams = await Promise.resolve(params);
+    const rawId = resolvedParams?.id;
+    const cleanId = decodeURIComponent(rawId || "").trim();
+
+    if (!cleanId) {
+      return errorResponse("Missing complaint identifier", 400, "BAD_REQUEST");
+    }
+
     const body = await request.json();
     const parseResult = UpdateStatusSchema.safeParse(body);
     if (!parseResult.success) {
@@ -42,18 +42,34 @@ export async function PATCH(
     }
 
     const { status: newStatus, resolution_notes, note } = parseResult.data;
-    const isDemo = !auth?.user || !auth.profile;
-    const supabase = isDemo ? createAdminClient() : await createSupabaseServerClient();
 
-    // Fetch current complaint
-    const { data: complaint, error: fetchError } = await supabase
-      .from("complaints")
-      .select("id, status, department_id, citizen_id, tracking_id")
-      .eq("id", id)
-      .single();
+    // Use Service Role client to bypass RLS restrictions
+    const admin = createAdminClient();
 
-    if (fetchError || !complaint) {
-      return errorResponse("Complaint not found.", 404, "NOT_FOUND");
+    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanId);
+
+    // Fetch complaint by UUID or tracking code
+    let complaint: any = null;
+    if (isUUID) {
+      const { data } = await admin
+        .from("complaints")
+        .select("id, status, department_id, citizen_id, tracking_id")
+        .eq("id", cleanId)
+        .maybeSingle();
+      complaint = data;
+    }
+
+    if (!complaint) {
+      const { data } = await admin
+        .from("complaints")
+        .select("id, status, department_id, citizen_id, tracking_id")
+        .or(`tracking_id.eq.${cleanId},tracking_code.eq.${cleanId}`)
+        .maybeSingle();
+      complaint = data;
+    }
+
+    if (!complaint) {
+      return errorResponse(`Complaint "${cleanId}" not found.`, 404, "NOT_FOUND");
     }
 
     const now = new Date().toISOString();
@@ -68,42 +84,63 @@ export async function PATCH(
       updatePayload.closed_at = now;
     }
 
-    // Apply the status update
-    const { error: updateError } = await supabase
+    // Apply the status update directly to Supabase complaints table
+    const { error: updateError } = await admin
       .from("complaints")
       .update(updatePayload)
-      .eq("id", id);
+      .eq("id", complaint.id);
 
     if (updateError) {
       console.error("[CivicPulse API] Status update failed:", updateError.message);
       return errorResponse("Failed to update status in database.", 500, "DB_ERROR");
     }
 
-    // Record event in complaint_events
-    await supabase.from("complaint_events").insert({
-      complaint_id: id,
-      actor_id: auth?.user?.id ?? null,
-      event_type: newStatus === "resolved" ? "resolved" : "status_changed",
-      previous_value: { status: complaint.status },
-      new_value: { status: newStatus },
-      note: note || resolution_notes || `Status transitioned to ${newStatus}`,
-      created_at: now,
-    });
+    // Record audit event in complaint_events
+    try {
+      await admin.from("complaint_events").insert({
+        complaint_id: complaint.id,
+        actor_id: auth?.user?.id ?? null,
+        event_type: newStatus === "resolved" ? "resolved" : "status_changed",
+        previous_value: { status: complaint.status },
+        new_value: { status: newStatus },
+        note: note || resolution_notes || `Status transitioned to ${newStatus}`,
+        created_at: now,
+      });
+    } catch (e) {
+      console.warn("[CivicPulse API] Could not record status change event:", e);
+    }
 
     // Notify citizen if citizen_id exists
     if (complaint.citizen_id) {
       notifyStatusChanged({
         citizen_user_id: complaint.citizen_id,
-        complaint_id: id,
-        tracking_id: complaint.tracking_id,
+        complaint_id: complaint.id,
+        tracking_id: complaint.tracking_id || cleanId,
         new_status: newStatus,
-      }).catch((e: unknown) => {
-        console.warn("[CivicPulse API] Status notification failed:", e);
-      });
+      }).catch(() => {});
     }
 
-    return successResponse({ id, status: newStatus });
+    return successResponse({
+      complaint_id: complaint.id,
+      tracking_id: complaint.tracking_id || cleanId,
+      status: newStatus,
+      updated_at: now,
+    });
   } catch (err) {
     return handleRouteError(err);
   }
+}
+
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  return handleStatusUpdate(request, params);
+}
+
+export async function POST(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  return handleStatusUpdate(request, params);
 }

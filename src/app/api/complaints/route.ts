@@ -41,6 +41,7 @@ import {
   STORAGE_BUCKET_NAME,
   uploadComplaintPhotoSafely,
 } from "@/lib/storage/complaint-storage";
+import { ensureSampleComplaintsSynced } from "@/lib/storage/seed-complaints";
 
 // ---------------------------------------------------------------------------
 // GET /api/complaints — list complaints with server-side filtering
@@ -94,6 +95,7 @@ export async function GET(request: NextRequest) {
     }
 
     const filters = parseResult.data;
+    ensureSampleComplaintsSynced().catch(() => {});
     const supabase = isDemoOfficer ? createAdminClient() : await createSupabaseServerClient();
 
     // Select valid schema columns

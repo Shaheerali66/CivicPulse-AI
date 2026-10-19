@@ -100,6 +100,7 @@ export default function OfficerDashboardPage() {
 
   // Selected complaint for Detail Modal
   const [selectedComplaintId, setSelectedComplaintId] = useState<string | null>(null);
+  const [selectedComplaint, setSelectedComplaint] = useState<DbComplaint | null>(null);
 
   // Selected complaint for Human Review Modal
   const [reviewComplaint, setReviewComplaint] = useState<DbComplaint | null>(null);
@@ -321,7 +322,10 @@ export default function OfficerDashboardPage() {
         {activeTab === "map" ? (
           <ComplaintMap
             complaints={complaints}
-            onSelectComplaint={(c) => setSelectedComplaintId(c.id)}
+            onSelectComplaint={(c) => {
+              setSelectedComplaintId(c.id);
+              setSelectedComplaint(c);
+            }}
           />
         ) : (
           <ComplaintQueue
@@ -335,7 +339,10 @@ export default function OfficerDashboardPage() {
             departments={departments}
             onFilterChange={handleFilterChange}
             onResetFilters={handleResetFilters}
-            onSelectComplaint={(c) => setSelectedComplaintId(c.id)}
+            onSelectComplaint={(c) => {
+              setSelectedComplaintId(c.id);
+              setSelectedComplaint(c);
+            }}
             onReviewComplaint={(c) => setReviewComplaint(c)}
             onRefresh={() => {
               fetchSummary();
@@ -349,7 +356,16 @@ export default function OfficerDashboardPage() {
       {selectedComplaintId && (
         <ComplaintDetailModal
           complaintId={selectedComplaintId}
-          onClose={() => setSelectedComplaintId(null)}
+          complaint={
+            selectedComplaint ||
+            complaints.find(
+              (c) => c.id === selectedComplaintId || c.tracking_id === selectedComplaintId
+            )
+          }
+          onClose={() => {
+            setSelectedComplaintId(null);
+            setSelectedComplaint(null);
+          }}
           onUpdated={() => {
             fetchSummary();
             fetchComplaints();

@@ -50,20 +50,42 @@ import {
 import { formatDateTime, getCategoryLabel, getStatusLabel } from "@/lib/utils";
 
 interface DetailModalProps {
-  complaintId: string;
+  complaintId?: string;
+  complaint?: any;
+  initialComplaint?: any;
   onClose: () => void;
   onUpdated?: () => void;
   userRole?: string;
 }
 
 export function ComplaintDetailModal({
-  complaintId,
+  complaintId: rawComplaintId,
+  complaint: initialComplaintProp,
+  initialComplaint,
   onClose,
   onUpdated,
   userRole = "officer",
 }: DetailModalProps) {
-  const [complaint, setComplaint] = useState<ComplaintWithRelations | null>(null);
-  const [loading, setLoading] = useState(true);
+  const incomingComplaint = initialComplaintProp || initialComplaint || null;
+  const complaintId = rawComplaintId || incomingComplaint?.id || incomingComplaint?.tracking_id;
+
+  const [complaint, setComplaint] = useState<ComplaintWithRelations | null>(() => {
+    if (incomingComplaint) {
+      return {
+        ...incomingComplaint,
+        tracking_id: incomingComplaint.tracking_id || incomingComplaint.tracking_code || incomingComplaint.id,
+        trackingId: incomingComplaint.tracking_id || incomingComplaint.tracking_code || incomingComplaint.id,
+        priority_band: incomingComplaint.priority_band || incomingComplaint.priority || "medium",
+        priority_score: incomingComplaint.priority_score || 50,
+        department: incomingComplaint.department || { name: "Municipal Services" },
+        events: Array.isArray(incomingComplaint.events) ? incomingComplaint.events : [],
+        duplicate_candidates: Array.isArray(incomingComplaint.duplicate_candidates) ? incomingComplaint.duplicate_candidates : [],
+      };
+    }
+    return null;
+  });
+
+  const [loading, setLoading] = useState<boolean>(!incomingComplaint);
   const [error, setError] = useState<string | null>(null);
 
   // Status transition state
@@ -75,7 +97,7 @@ export function ComplaintDetailModal({
 
   // Assignment state
   const [departments, setDepartments] = useState<DbDepartment[]>([]);
-  const [selectedDeptId, setSelectedDeptId] = useState("");
+  const [selectedDeptId, setSelectedDeptId] = useState(incomingComplaint?.department_id || "");
   const [assignNote, setAssignNote] = useState("");
   const [assigning, setAssigning] = useState(false);
   const [assignFeedback, setAssignFeedback] = useState<{ type: "success" | "error"; msg: string } | null>(null);
@@ -87,16 +109,21 @@ export function ComplaintDetailModal({
   const [reviewingDupId, setReviewingDupId] = useState<string | null>(null);
 
   // Fetch complaint details
-  const fetchDetail = async () => {
+  const fetchDetail = async (isBackground = false) => {
     const cleanId = String(complaintId || "").trim();
     if (!cleanId) return;
 
     try {
-      setLoading(true);
+      if (!isBackground) {
+        setLoading(true);
+      }
       setError(null);
       const res = await fetch(`/api/complaints/${encodeURIComponent(cleanId)}`);
       if (!res.ok) {
-        throw new Error("Failed to load complaint details");
+        if (!isBackground) {
+          throw new Error("Failed to load complaint details");
+        }
+        return;
       }
       const json = await res.json();
       const complaintData = json.data || json.complaint;
@@ -104,14 +131,20 @@ export function ComplaintDetailModal({
         if (!Array.isArray(complaintData.events)) complaintData.events = [];
         if (!Array.isArray(complaintData.duplicate_candidates)) complaintData.duplicate_candidates = [];
         setComplaint(complaintData);
-        setSelectedDeptId(complaintData.department_id || "");
-      } else {
+        if (complaintData.department_id) {
+          setSelectedDeptId(complaintData.department_id);
+        }
+      } else if (!isBackground) {
         throw new Error(json.error || "Complaint not found");
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Error fetching details");
+      if (!isBackground) {
+        setError(err instanceof Error ? err.message : "Error fetching details");
+      }
     } finally {
-      setLoading(false);
+      if (!isBackground) {
+        setLoading(false);
+      }
     }
   };
 
@@ -129,7 +162,11 @@ export function ComplaintDetailModal({
   };
 
   useEffect(() => {
-    fetchDetail();
+    if (!incomingComplaint) {
+      fetchDetail(false);
+    } else {
+      fetchDetail(true);
+    }
     fetchDepartments();
   }, [complaintId]);
 
