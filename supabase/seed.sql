@@ -127,3 +127,10 @@ SET
   priority = EXCLUDED.priority,
   updated_at = now();
 
+-- ----------------------------------------------------------------------------
+-- 3. Public Complaint Submission RLS Policy
+-- ----------------------------------------------------------------------------
+DROP POLICY IF EXISTS "Enable insert for all users" ON "public"."complaints";
+DROP POLICY IF EXISTS "complaints_insert_citizen" ON "public"."complaints";
+CREATE POLICY "Enable insert for all users" ON "public"."complaints" FOR INSERT WITH CHECK (true);
+

@@ -17,6 +17,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentUser, getCurrentUserWithProfile, getUserDepartmentIds } from "@/lib/auth/session";
@@ -226,8 +227,18 @@ export async function POST(request: NextRequest) {
     const location_label =
       input.location_label ?? input.location?.addressDescription ?? null;
 
-    // Always use admin (service role) client for INSERT to bypass RLS completely
-    const supabase = createAdminClient();
+    // Force the use of Supabase Service Role client to bypass RLS for all inserts
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const supabaseServiceKey =
+      process.env.SUPABASE_SERVICE_ROLE_KEY ||
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+
+    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+    });
 
     // Generate unique tracking ID
     const datePart = new Date().toISOString().slice(0, 10).replace(/-/g, "");
@@ -281,7 +292,7 @@ export async function POST(request: NextRequest) {
       insertPayload.citizen_id = user.id;
     }
 
-    const { data: complaint, error: insertError } = await supabase
+    const { data: complaint, error: insertError } = await supabaseAdmin
       .from("complaints")
       .insert(insertPayload)
       .select("id, tracking_id")
@@ -314,7 +325,7 @@ export async function POST(request: NextRequest) {
         photoPath = uploadResult.photoPath;
 
         if (photoPath) {
-          await supabase
+          await supabaseAdmin
             .from("complaints")
             .update({ photo_path: photoPath })
             .eq("id", complaint.id);
@@ -339,7 +350,7 @@ export async function POST(request: NextRequest) {
       // ── Manual mode: use citizen-selected department directly ─────────────
       // Skip AI entirely — resolve the selected department from DB and assign.
       try {
-        const { data: dept } = await supabase
+        const { data: dept } = await supabaseAdmin
           .from("departments")
           .select("id, name, slug")
           .eq("id", input.department_id!)
@@ -354,7 +365,7 @@ export async function POST(request: NextRequest) {
         finalPriority = "medium";
         finalCategory = input.category || "unknown";
 
-        await supabase
+        await supabaseAdmin
           .from("complaints")
           .update({
             category: finalCategory,
@@ -366,7 +377,7 @@ export async function POST(request: NextRequest) {
 
         // Record manual routing audit event
         try {
-          await supabase.from("complaint_events").insert({
+          await supabaseAdmin.from("complaint_events").insert({
             complaint_id: complaint.id,
             actor_id: null,
             event_type: "status_changed",
@@ -420,7 +431,7 @@ export async function POST(request: NextRequest) {
         // Look up department ID by slug or name in Supabase
         let deptId: string | null = input.department_id ?? null;
         try {
-          let { data: dept } = await supabase
+          let { data: dept } = await supabaseAdmin
             .from("departments")
             .select("id, name, slug")
             .eq("slug", targetSlug)
@@ -428,7 +439,7 @@ export async function POST(request: NextRequest) {
             .maybeSingle();
 
           if (!dept) {
-            const res = await supabase
+            const res = await supabaseAdmin
               .from("departments")
               .select("id, name, slug")
               .eq("name", departmentName)
@@ -447,7 +458,7 @@ export async function POST(request: NextRequest) {
         }
 
         // Update complaint with AI-derived fields (only schema columns)
-        const { error: updateError } = await supabase
+        const { error: updateError } = await supabaseAdmin
           .from("complaints")
           .update({
             category: sanitizeCategory(analysis.category),
@@ -463,8 +474,7 @@ export async function POST(request: NextRequest) {
 
         // Store AI analysis in ai_analyses table
         try {
-          const adminClient = createAdminClient();
-          await adminClient.from("ai_analyses").insert({
+          await supabaseAdmin.from("ai_analyses").insert({
             complaint_id: complaint.id,
             model_name: aiResult.modelName ?? null,
             category: analysis.category,
@@ -483,7 +493,7 @@ export async function POST(request: NextRequest) {
 
         // Record audit event
         try {
-          await supabase.from("complaint_events").insert({
+          await supabaseAdmin.from("complaint_events").insert({
             complaint_id: complaint.id,
             actor_id: null,
             event_type: "ai_analyzed",
@@ -502,7 +512,7 @@ export async function POST(request: NextRequest) {
       } catch (aiErr) {
         console.error("[CivicPulse API] AI analysis block failed:", aiErr);
         try {
-          await supabase
+          await supabaseAdmin
             .from("complaints")
             .update({ status: "needs_review" })
             .eq("id", complaint.id);

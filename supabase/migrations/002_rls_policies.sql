@@ -176,21 +176,8 @@ CREATE POLICY "complaints_select_authorized"
   );
 
 -- INSERT:
--- Authenticated citizen can insert their own complaint. Must default to 'submitted' status,
--- without arbitrary department or officer assignment.
-CREATE POLICY "complaints_insert_citizen"
-  ON public.complaints
-  FOR INSERT
-  TO authenticated
-  WITH CHECK (
-    (
-      citizen_id = auth.uid()
-      AND status = 'submitted'
-      AND department_id IS NULL
-      AND assigned_to IS NULL
-    )
-    OR public.is_admin()
-  );
+-- Enable insert for all users (citizens and anonymous/public submissions)
+CREATE POLICY "Enable insert for all users" ON "public"."complaints" FOR INSERT WITH CHECK (true);
 
 -- UPDATE:
 -- 1. Citizen can update their own complaint only while status is 'submitted'
