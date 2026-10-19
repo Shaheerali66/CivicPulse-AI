@@ -98,6 +98,10 @@ export async function GET(
     data.trackingId = trackingCode;
     data.priority_band = data.priority_band || data.priority || "medium";
     data.priority_score = data.priority_score || 50;
+    // Ensure created_at is always populated (DB uses submitted_at as the canonical column)
+    data.created_at = data.created_at || data.submitted_at || new Date().toISOString();
+    data.submitted_at = data.submitted_at || data.created_at;
+
 
     // Load AI analysis record if available in Supabase
     let aiRecord = data.ai_analysis || null;

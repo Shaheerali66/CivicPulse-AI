@@ -226,8 +226,10 @@ export async function POST(request: NextRequest) {
     const location_label =
       input.location_label ?? input.location?.addressDescription ?? null;
 
-    // Use admin client when unauthenticated to bypass RLS
-    const supabase = user ? await createSupabaseServerClient() : createAdminClient();
+    // Always use admin (service role) client for INSERT to bypass RLS completely
+    const supabase = createAdminClient();
+    // Keep a user-scoped client for reads if authenticated
+    const userSupabase = user ? await createSupabaseServerClient() : supabase;
 
     // Generate unique tracking ID
     const datePart = new Date().toISOString().slice(0, 10).replace(/-/g, "");
@@ -243,12 +245,13 @@ export async function POST(request: NextRequest) {
       latitude: latitude ?? null,
       longitude: longitude ?? null,
       location_label: location_label ?? null,
-      status: "submitted",
+      status: "needs_review",       // default — officer must review before acting
       category: input.category || "unknown",
-      priority: "medium",               // default; updated after AI runs
+      priority: "medium",           // default; updated after AI runs
       submission_method:
         input.reportingMode === "ai_assisted" ? "ai" : "manual",
-      is_public: false,
+      is_public: true,
+      submitted_at: new Date().toISOString(),
     };
 
     // Attach citizen_id only if authenticated
@@ -499,6 +502,7 @@ export async function POST(request: NextRequest) {
       {
         id: complaint.id,
         tracking_id: complaint.tracking_id,
+        tracking_code: complaint.tracking_id,
         trackingId: complaint.tracking_id,
         status: needsReview ? "needs_review" : "submitted",
         category: finalCategory,
@@ -510,6 +514,7 @@ export async function POST(request: NextRequest) {
         aiSummary: aiSummaryText,
         needsHumanReview: needsReview,
         photo_path: photoPath,
+        success: true,
       },
       201
     );
