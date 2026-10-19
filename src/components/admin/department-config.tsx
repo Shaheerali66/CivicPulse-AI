@@ -20,6 +20,7 @@ import {
   Check,
   X,
   Users,
+  Layers,
 } from "lucide-react";
 import type { DbDepartment } from "@/types/database";
 
@@ -42,7 +43,10 @@ export function DepartmentConfig() {
     try {
       setLoading(true);
       setError(null);
-      const res = await fetch("/api/admin/departments");
+      const res = await fetch("/api/admin/departments", {
+        cache: "no-store",
+        headers: { "Cache-Control": "no-cache" },
+      });
       if (!res.ok) throw new Error("Failed to load departments.");
       const json = await res.json();
       if (json.success && json.data) {
@@ -158,14 +162,26 @@ export function DepartmentConfig() {
             Hyderabad, Sindh, Pakistan demo jurisdiction mapping. Deactivation preserves complaint history.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={openCreateModal}
-          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold shadow-xs transition-colors shrink-0"
-        >
-          <Plus className="w-4 h-4" />
-          Add Department
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={fetchDepartments}
+            disabled={loading}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 rounded text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:text-slate-900 shadow-2xs transition-colors disabled:opacity-50"
+            title="Refresh departments list from database"
+          >
+            <RotateCw className={`w-3.5 h-3.5 ${loading ? "animate-spin text-blue-600" : "text-slate-500"}`} />
+            Refresh
+          </button>
+          <button
+            type="button"
+            onClick={openCreateModal}
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold shadow-xs transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            Add Department
+          </button>
+        </div>
       </div>
 
       {/* Department Table */}
@@ -174,9 +190,10 @@ export function DepartmentConfig() {
           <thead>
             <tr className="bg-slate-100 border-b border-slate-200 text-slate-700 font-semibold uppercase tracking-wider text-[11px]">
               <th className="py-3 px-4">Department Name</th>
-              <th className="py-3 px-4">Slug Identifier</th>
+              <th className="py-3 px-4">Slug / Identifier</th>
               <th className="py-3 px-4">Description</th>
               <th className="py-3 px-4">Status</th>
+              <th className="py-3 px-4">In-Progress Complaints</th>
               <th className="py-3 px-4">Staff Count</th>
               <th className="py-3 px-4 text-right">Actions</th>
             </tr>
@@ -184,20 +201,20 @@ export function DepartmentConfig() {
           <tbody className="divide-y divide-slate-100 text-slate-800">
             {loading ? (
               <tr>
-                <td colSpan={6} className="py-10 text-center text-slate-500">
+                <td colSpan={7} className="py-10 text-center text-slate-500">
                   <RotateCw className="w-5 h-5 animate-spin mx-auto mb-2 text-blue-600" />
                   Loading departments...
                 </td>
               </tr>
             ) : error ? (
               <tr>
-                <td colSpan={6} className="py-8 text-center text-rose-600">
+                <td colSpan={7} className="py-8 text-center text-rose-600">
                   {error}
                 </td>
               </tr>
             ) : departments.length === 0 ? (
               <tr>
-                <td colSpan={6} className="py-8 text-center text-slate-500">
+                <td colSpan={7} className="py-8 text-center text-slate-500">
                   No departments found.
                 </td>
               </tr>
@@ -207,25 +224,38 @@ export function DepartmentConfig() {
                   ? dept.member_count[0]?.count ?? 0
                   : dept.member_count ?? 0;
 
+                const inProgressCount = dept.in_progress_complaints ?? dept.active_complaints_count ?? 0;
+
                 return (
-                  <tr key={dept.id} className="hover:bg-slate-50">
+                  <tr key={dept.id} className="hover:bg-slate-50 transition-colors">
                     <td className="py-3 px-4 font-semibold text-slate-900 flex items-center gap-2">
-                      <Building2 className="w-4 h-4 text-slate-400" />
+                      <Building2 className="w-4 h-4 text-slate-400 shrink-0" />
                       {dept.name}
                     </td>
-                    <td className="py-3 px-4 font-mono text-slate-500">{dept.slug}</td>
-                    <td className="py-3 px-4 text-slate-600 max-w-xs truncate">
+                    <td className="py-3 px-4">
+                      <code className="px-1.5 py-0.5 rounded bg-slate-100 font-mono text-[11px] text-slate-600 font-medium">
+                        {dept.slug || dept.code}
+                      </code>
+                    </td>
+                    <td className="py-3 px-4 text-slate-600 max-w-xs truncate" title={dept.description || undefined}>
                       {dept.description || "—"}
                     </td>
                     <td className="py-3 px-4">
                       <span
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold ${
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
                           dept.is_active
-                            ? "bg-emerald-100 text-emerald-800"
-                            : "bg-slate-200 text-slate-600"
+                            ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                            : "bg-slate-100 text-slate-600 border-slate-200"
                         }`}
                       >
+                        <span className={`w-1.5 h-1.5 rounded-full ${dept.is_active ? "bg-emerald-500" : "bg-slate-400"}`} />
                         {dept.is_active ? "Active" : "Inactive"}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-semibold text-[11px] bg-amber-50 text-amber-900 border border-amber-200">
+                        <Layers className="w-3.5 h-3.5 text-amber-600" />
+                        {inProgressCount}
                       </span>
                     </td>
                     <td className="py-3 px-4">
@@ -239,15 +269,15 @@ export function DepartmentConfig() {
                         <button
                           type="button"
                           onClick={() => openEditModal(dept)}
-                          className="p-1 text-slate-600 hover:text-slate-900 rounded hover:bg-slate-100"
-                          title="Edit department"
+                          className="p-1 text-slate-600 hover:text-slate-900 rounded hover:bg-slate-100 transition-colors"
+                          title="Edit department details"
                         >
                           <Edit2 className="w-3.5 h-3.5" />
                         </button>
                         <button
                           type="button"
                           onClick={() => toggleActiveStatus(dept)}
-                          className={`p-1 rounded hover:bg-slate-100 ${
+                          className={`p-1 rounded hover:bg-slate-100 transition-colors ${
                             dept.is_active ? "text-rose-600 hover:text-rose-700" : "text-emerald-600 hover:text-emerald-700"
                           }`}
                           title={dept.is_active ? "Deactivate department" : "Activate department"}

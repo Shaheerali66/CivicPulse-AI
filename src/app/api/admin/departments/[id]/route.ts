@@ -7,9 +7,11 @@
  */
 
 import { NextRequest } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
-import { getCurrentUserWithProfile } from "@/lib/auth/session";
+import { createClient } from "@supabase/supabase-js";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 import {
   errorResponse,
   handleRouteError,
@@ -17,21 +19,23 @@ import {
 } from "@/lib/api/error-response";
 import { DepartmentUpsertSchema } from "@/lib/validation/api-schemas";
 
+function getAdminClient() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const supabaseServiceKey =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+
+  return createClient(supabaseUrl, supabaseServiceKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    let auth = null;
-    try {
-      auth = await getCurrentUserWithProfile();
-    } catch {
-      auth = null;
-    }
-
-    const isDemo = !auth?.user || !auth.profile || auth.profile.role !== "admin";
-    const supabase = isDemo ? createAdminClient() : await createSupabaseServerClient();
-
+    const supabase = getAdminClient();
     const { id } = await params;
     const body = await request.json();
     const parseResult = DepartmentUpsertSchema.partial().safeParse(body);
@@ -70,16 +74,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    let auth = null;
-    try {
-      auth = await getCurrentUserWithProfile();
-    } catch {
-      auth = null;
-    }
-
-    const isDemo = !auth?.user || !auth.profile || auth.profile.role !== "admin";
-    const supabase = isDemo ? createAdminClient() : await createSupabaseServerClient();
-
+    const supabase = getAdminClient();
     const { id } = await params;
 
     // Soft deactivate instead of destructive delete to protect complaint history
