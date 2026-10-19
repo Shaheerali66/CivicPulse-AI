@@ -52,22 +52,60 @@ function TrackContent() {
       }
 
       const comp = data.complaint || data.data || data;
+
+      // Safely format a date string, returning fallback on invalid dates
+      const safeDate = (val: any): string => {
+        if (!val) return new Date().toISOString();
+        const d = new Date(val);
+        return isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+      };
+
+      // Map DB event rows to UI shape
+      const mapEvents = (events: any[]) =>
+        events.map((ev: any) => ({
+          label:
+            ev.label ||
+            (ev.event_type
+              ? ev.event_type.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase())
+              : "Status Update"),
+          timestamp: safeDate(ev.timestamp || ev.created_at),
+          notes: ev.notes || ev.note || (typeof ev.new_value === "string" ? ev.new_value : ev.new_value?.status) || undefined,
+        }));
+
+      const rawCategory = data.category || comp.category || "General";
+      const categoryLabel = String(rawCategory)
+        .replace(/_/g, " ")
+        .replace(/\b\w/g, (c) => c.toUpperCase());
+
+      const rawHistory = data.history || comp.events || [];
+      const history =
+        Array.isArray(rawHistory) && rawHistory.length > 0
+          ? mapEvents(rawHistory)
+          : [
+              {
+                label: "Complaint Submitted & Recorded",
+                timestamp: safeDate(comp.created_at || comp.submitted_at),
+                notes: undefined,
+              },
+            ];
+
       const normalized = {
         ...comp,
         ...data,
-        trackingId: data.trackingId || comp.tracking_code || comp.tracking_id || comp.id || idToSearch.trim(),
-        status: data.status || comp.status || "submitted",
-        category: data.category || comp.category || "unknown",
-        categoryLabel: data.categoryLabel || comp.categoryLabel || comp.category || "General",
-        department: typeof data.department === "string" ? data.department : (comp.department?.name || comp.department || "Municipal Services"),
-        summary: data.summary || comp.summary || comp.description || comp.title || "Complaint filed.",
-        history: data.history || comp.events || [
-          {
-            status: comp.status || "submitted",
-            label: "Complaint Submitted & Recorded",
-            timestamp: comp.submitted_at || comp.created_at || new Date().toISOString(),
-          }
-        ],
+        trackingId:
+          data.trackingId || comp.tracking_code || comp.tracking_id || comp.id || cleanId,
+        status: (data.status || comp.status || "submitted") as ComplaintStatus,
+        category: rawCategory,
+        categoryLabel,
+        department:
+          typeof data.department === "string"
+            ? data.department
+            : comp.department?.name || (typeof comp.department === "string" ? comp.department : null) || "Municipal Services",
+        summary:
+          data.summary || comp.summary || comp.description || comp.title || "Complaint filed.",
+        // Map created_at → createdAt for UI display
+        createdAt: safeDate(comp.created_at || comp.submitted_at || comp.createdAt),
+        history,
       };
 
       setComplaint(normalized as any);
@@ -89,10 +127,15 @@ function TrackContent() {
     fetchTrackingData(trackingInput);
   };
 
-  // Status step progression helper
+  // Normalize status string and map to step index
   const getStepStatus = (currentStatus: string, stepIndex: number) => {
+    const normalized = String(currentStatus || "")
+      .toLowerCase()
+      .replace(/\s+/g, "_");
     const statusOrder: Record<string, number> = {
       submitted: 1,
+      needs_review: 1,
+      pending: 1,
       under_review: 2,
       assigned: 2,
       in_progress: 3,
@@ -100,7 +143,7 @@ function TrackContent() {
       closed: 4,
       rejected: 0,
     };
-    const currentStep = statusOrder[currentStatus] || 1;
+    const currentStep = statusOrder[normalized] ?? 1;
     if (currentStep > stepIndex) return "completed";
     if (currentStep === stepIndex) return "current";
     return "pending";
@@ -286,7 +329,7 @@ function TrackContent() {
                   Category
                 </span>
                 <span className="font-bold text-slate-900 mt-1 block">
-                  {complaint.categoryLabel}
+                  {(complaint as any).categoryLabel || String((complaint as any).category || "General").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
                 </span>
               </div>
               <div>
@@ -306,11 +349,14 @@ function TrackContent() {
                 </span>
                 <span className="text-slate-800 flex items-center gap-1.5 mt-1 font-medium">
                   <Calendar className="w-4 h-4 text-slate-500 shrink-0" />
-                  {new Date(complaint.createdAt).toLocaleDateString("en-US", {
-                    year: "numeric",
-                    month: "short",
-                    day: "numeric",
-                  })}
+                  {(() => {
+                    const raw = (complaint as any).createdAt || (complaint as any).created_at;
+                    if (!raw) return "—";
+                    const d = new Date(raw);
+                    return isNaN(d.getTime())
+                      ? "—"
+                      : d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+                  })()}
                 </span>
               </div>
             </div>
@@ -329,7 +375,7 @@ function TrackContent() {
             <div className="pt-4 border-t border-slate-200">
               <h3 className="text-sm font-bold text-slate-900 mb-4 flex items-center gap-2">
                 <Clock className="w-4 h-4 text-slate-600" />
-                <span>Status History & Official Actions</span>
+                <span>Status History &amp; Official Actions</span>
               </h3>
               <div className="space-y-4">
                 {complaint.history && complaint.history.length > 0 ? (
@@ -340,10 +386,12 @@ function TrackContent() {
                         <div className="flex items-center justify-between mb-1">
                           <span className="font-bold text-slate-900 text-sm">{event.label}</span>
                           <span className="text-slate-500 font-mono">
-                            {new Date(event.timestamp).toLocaleString("en-US", {
-                              dateStyle: "medium",
-                              timeStyle: "short",
-                            })}
+                            {(() => {
+                              const d = new Date(event.timestamp);
+                              return isNaN(d.getTime())
+                                ? "—"
+                                : d.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" });
+                            })()}
                           </span>
                         </div>
                         {event.notes && <p className="text-slate-600 mt-1 leading-relaxed">{event.notes}</p>}
