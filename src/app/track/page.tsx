@@ -36,7 +36,8 @@ function TrackContent() {
   const [error, setError] = useState<string | null>(null);
 
   const fetchTrackingData = async (idToSearch: string) => {
-    if (!idToSearch.trim()) return;
+    const cleanId = (idToSearch || "").trim();
+    if (!cleanId) return;
 
     setLoading(true);
     setError(null);

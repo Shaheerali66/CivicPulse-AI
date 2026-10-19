@@ -3,14 +3,14 @@
  *
  * GET /api/complaints/[id] & PATCH /api/complaints/[id]
  *
- * Supports lookup by:
- * 1. UUID (complaint primary key id)
- * 2. tracking_code (e.g. "CP-20261019-00TE")
- * 3. tracking_id (alternative column name in database schemas)
+ * Case-insensitive lookup supporting:
+ * 1. UUID (complaint primary key id via exact .eq)
+ * 2. tracking_code (via Supabase case-insensitive .ilike)
+ * 3. tracking_id (via Supabase case-insensitive .ilike)
+ * 4. Bypasses RLS via createAdminClient for reliable anonymous tracking
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentUserWithProfile } from "@/lib/auth/session";
 import { COMPLAINT_CATEGORIES, COMPLAINT_STATUS_LABELS, type ComplaintStatus } from "@/types/complaint";
@@ -31,89 +31,64 @@ export async function GET(
       );
     }
 
-    const supabase = await createServerSupabaseClient();
+    // Always use admin client so anonymous RLS policies do not restrict public status tracking lookup
     const admin = createAdminClient();
 
     // Check if the parameter is a valid UUID format
     const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 
     let data: any = null;
-    let queryError: any = null;
 
     // 1. If UUID, query complaints by primary key 'id'
     if (isUUID) {
-      const res = await supabase.from("complaints").select("*").eq("id", id).maybeSingle();
-      data = res.data;
-      queryError = res.error;
-
-      // Fallback to admin client if RLS blocked unauthenticated lookup
-      if (!data && !queryError) {
-        const adminRes = await admin.from("complaints").select("*").eq("id", id).maybeSingle();
-        data = adminRes.data;
-      }
+      const res = await admin.from("complaints").select("*").eq("id", id).maybeSingle();
+      if (res.data) data = res.data;
     }
 
-    // 2. Search by tracking_code (e.g. CP-20261019-00TE)
+    // 2. Case-insensitive search using .ilike('tracking_code', id)
     if (!data) {
       try {
-        const res = await supabase.from("complaints").select("*").eq("tracking_code", id).maybeSingle();
+        const res = await admin.from("complaints").select("*").ilike("tracking_code", id).maybeSingle();
         if (res.data) data = res.data;
       } catch {
-        // column tracking_code might not exist in some schemas
-      }
-
-      if (!data) {
-        try {
-          const adminRes = await admin.from("complaints").select("*").eq("tracking_code", id).maybeSingle();
-          if (adminRes.data) data = adminRes.data;
-        } catch {
-          // ignore
-        }
+        // column tracking_code might not exist in some environments
       }
     }
 
-    // 3. Search by tracking_id (standard schema column)
+    // 3. Case-insensitive search using .ilike('tracking_id', id)
     if (!data) {
       try {
-        const res = await supabase.from("complaints").select("*").eq("tracking_id", id).maybeSingle();
+        const res = await admin.from("complaints").select("*").ilike("tracking_id", id).maybeSingle();
         if (res.data) data = res.data;
       } catch {
-        // column tracking_id might not exist in some schemas
-      }
-
-      if (!data) {
-        try {
-          const adminRes = await admin.from("complaints").select("*").eq("tracking_id", id).maybeSingle();
-          if (adminRes.data) data = adminRes.data;
-        } catch {
-          // ignore
-        }
+        // column tracking_id might not exist in some environments
       }
     }
 
-    // 4. Fallback: search across both columns using OR
+    // 4. Exact match fallback
     if (!data) {
-      if (isUUID) {
-        try {
-          const res = await supabase
-            .from("complaints")
-            .select("*")
-            .or(`id.eq.${id},tracking_code.eq.${id}`)
-            .maybeSingle();
-          if (res.data) data = res.data;
-        } catch {}
+      try {
+        const res = await admin.from("complaints").select("*").eq("tracking_code", id).maybeSingle();
+        if (res.data) data = res.data;
+      } catch {}
+    }
+    if (!data) {
+      try {
+        const res = await admin.from("complaints").select("*").eq("tracking_id", id).maybeSingle();
+        if (res.data) data = res.data;
+      } catch {}
+    }
 
-        if (!data) {
-          try {
-            const res = await supabase
-              .from("complaints")
-              .select("*")
-              .or(`id.eq.${id},tracking_id.eq.${id}`)
-              .maybeSingle();
-            if (res.data) data = res.data;
-          } catch {}
-        }
-      }
+    // 5. Fallback OR search
+    if (!data && isUUID) {
+      try {
+        const res = await admin
+          .from("complaints")
+          .select("*")
+          .or(`id.eq.${id},tracking_code.ilike.${id},tracking_id.ilike.${id}`)
+          .maybeSingle();
+        if (res.data) data = res.data;
+      } catch {}
     }
 
     if (!data) {
@@ -240,7 +215,7 @@ export async function GET(
     data.safety_concern = Boolean(aiRecord?.safety_concern || data.safety_concern);
     data.needs_human_review = Boolean(aiRecord?.needs_human_review || data.needs_human_review);
 
-    // Return payload satisfying { complaint }, { data }, and flat public tracking response
+    // Return object containing { complaint: data, data: data }
     return NextResponse.json(
       {
         success: true,
@@ -298,7 +273,7 @@ export async function PATCH(
 
     const admin = createAdminClient();
 
-    // 1. Fetch current complaint by UUID, tracking_code, or tracking_id
+    // 1. Fetch current complaint by UUID, tracking_code (.ilike), or tracking_id (.ilike)
     let complaint: any = null;
 
     if (isUuid) {
@@ -308,14 +283,14 @@ export async function PATCH(
 
     if (!complaint) {
       try {
-        const res = await admin.from("complaints").select("*").eq("tracking_code", queryId).maybeSingle();
+        const res = await admin.from("complaints").select("*").ilike("tracking_code", queryId).maybeSingle();
         complaint = res.data;
       } catch {}
     }
 
     if (!complaint) {
       try {
-        const res = await admin.from("complaints").select("*").eq("tracking_id", queryId).maybeSingle();
+        const res = await admin.from("complaints").select("*").ilike("tracking_id", queryId).maybeSingle();
         complaint = res.data;
       } catch {}
     }

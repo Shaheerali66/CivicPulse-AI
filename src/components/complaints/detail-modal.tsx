@@ -88,16 +88,21 @@ export function ComplaintDetailModal({
 
   // Fetch complaint details
   const fetchDetail = async () => {
+    const cleanId = String(complaintId || "").trim();
+    if (!cleanId) return;
+
     try {
       setLoading(true);
       setError(null);
-      const res = await fetch(`/api/complaints/${complaintId}`);
+      const res = await fetch(`/api/complaints/${encodeURIComponent(cleanId)}`);
       if (!res.ok) {
         throw new Error("Failed to load complaint details");
       }
       const json = await res.json();
       const complaintData = json.data || json.complaint;
       if (complaintData) {
+        if (!Array.isArray(complaintData.events)) complaintData.events = [];
+        if (!Array.isArray(complaintData.duplicate_candidates)) complaintData.duplicate_candidates = [];
         setComplaint(complaintData);
         setSelectedDeptId(complaintData.department_id || "");
       } else {
@@ -408,7 +413,7 @@ export function ComplaintDetailModal({
                         <div>
                           <span className="text-slate-500 block">Confidence:</span>
                           <span className="font-medium text-slate-800">
-                            {(complaint.ai_analysis.confidence * 100).toFixed(0)}%
+                            {((Number(complaint.ai_analysis.confidence) || 0.8) * 100).toFixed(0)}%
                           </span>
                         </div>
                         <div>
@@ -667,7 +672,7 @@ export function ComplaintDetailModal({
                         <div className="absolute -left-[31px] top-0.5 w-3 h-3 rounded-full bg-blue-600 border-2 border-white" />
                         <div className="flex items-baseline justify-between gap-2">
                           <span className="font-semibold text-slate-900 capitalize">
-                            {ev.event_type.replace(/_/g, " ")}
+                            {(ev.event_type || "event").replace(/_/g, " ")}
                           </span>
                           <span className="text-[11px] text-slate-400">
                             {formatDateTime(ev.created_at)}
