@@ -16,7 +16,7 @@
  * AI analysis is stored in the ai_analyses table (separate from complaints row).
  */
 
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentUser, getCurrentUserWithProfile, getUserDepartmentIds } from "@/lib/auth/session";
@@ -228,30 +228,52 @@ export async function POST(request: NextRequest) {
 
     // Always use admin (service role) client for INSERT to bypass RLS completely
     const supabase = createAdminClient();
-    // Keep a user-scoped client for reads if authenticated
-    const userSupabase = user ? await createSupabaseServerClient() : supabase;
 
     // Generate unique tracking ID
     const datePart = new Date().toISOString().slice(0, 10).replace(/-/g, "");
     const randomPart = Math.random().toString(36).substring(2, 6).toUpperCase();
     const trackingId = `CP-${datePart}-${randomPart}`;
 
+    // Sanitize category to valid DB enum values
+    // chk_complaints_category: road_damage|footpath_damage|garbage|waste_collection|
+    //   water_leakage|blocked_drain|streetlight|electrical_hazard|other|unknown
+    const VALID_CATEGORIES = new Set([
+      "road_damage", "footpath_damage", "garbage", "waste_collection",
+      "water_leakage", "blocked_drain", "streetlight", "electrical_hazard",
+      "other", "unknown",
+    ]);
+    const sanitizeCategory = (raw: string | undefined): string => {
+      if (!raw) return "unknown";
+      const normalized = raw.toLowerCase().trim().replace(/[\s-]+/g, "_");
+      if (VALID_CATEGORIES.has(normalized)) return normalized;
+      // Keyword fallback mapping
+      if (normalized.includes("road") || normalized.includes("pothole") || normalized.includes("pavement")) return "road_damage";
+      if (normalized.includes("footpath") || normalized.includes("sidewalk")) return "footpath_damage";
+      if (normalized.includes("garbage") || normalized.includes("trash") || normalized.includes("litter")) return "garbage";
+      if (normalized.includes("waste") || normalized.includes("collection") || normalized.includes("bin")) return "waste_collection";
+      if (normalized.includes("water") || normalized.includes("leak") || normalized.includes("pipe")) return "water_leakage";
+      if (normalized.includes("drain") || normalized.includes("sewer") || normalized.includes("flood")) return "blocked_drain";
+      if (normalized.includes("street") || normalized.includes("light") || normalized.includes("lamp")) return "streetlight";
+      if (normalized.includes("electric") || normalized.includes("hazard") || normalized.includes("wire") || normalized.includes("hesco")) return "electrical_hazard";
+      return "other";
+    };
+    const safeCategory = sanitizeCategory(input.category);
+
     // ── Step 1: Insert complaint ─────────────────────────────────────────────
-    // Only use columns that exist in the schema (001_initial_schema.sql)
+    // Exact columns from 001_initial_schema.sql — no extras that don't exist
     const insertPayload: Record<string, unknown> = {
-      tracking_id: trackingId,
-      title,
-      description: input.description,
-      latitude: latitude ?? null,
-      longitude: longitude ?? null,
-      location_label: location_label ?? null,
-      status: "needs_review",       // default — officer must review before acting
-      category: input.category || "unknown",
-      priority: "medium",           // default; updated after AI runs
-      submission_method:
-        input.reportingMode === "ai_assisted" ? "ai" : "manual",
-      is_public: true,
-      submitted_at: new Date().toISOString(),
+      tracking_id:       trackingId,
+      title:             title.slice(0, 200),       // enforce max 200 chars
+      description:       input.description.slice(0, 5000), // enforce max 5000
+      latitude:          latitude ?? null,
+      longitude:         longitude ?? null,
+      location_label:    location_label ?? null,
+      status:            "needs_review",
+      category:          safeCategory,
+      priority:          "medium",
+      submission_method: input.reportingMode === "ai_assisted" ? "ai" : "manual",
+      is_public:         true,
+      submitted_at:      new Date().toISOString(),
     };
 
     // Attach citizen_id only if authenticated
@@ -266,26 +288,19 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (insertError || !complaint) {
-      console.error("[CivicPulse API] Complaint insert failed:", insertError?.message, insertError?.details);
+      // Log full Supabase error for server-side debugging
+      console.error("[CivicPulse] Supabase DB Insert Error:", JSON.stringify(insertError, null, 2));
+      console.error("[CivicPulse] Insert payload was:", JSON.stringify(insertPayload, null, 2));
 
-      // Detect auth-related DB errors for guest users
-      if (
-        !user &&
-        (insertError?.message?.includes("citizen_id") ||
-          insertError?.message?.includes("null value") ||
-          insertError?.message?.includes("violates not-null"))
-      ) {
-        return errorResponse(
-          "Please sign in or create an account to submit your complaint.",
-          401,
-          "AUTH_REQUIRED"
-        );
-      }
-
-      return errorResponse(
-        "Failed to save your complaint. Please try again.",
-        500,
-        "DB_ERROR"
+      return NextResponse.json(
+        {
+          success: false,
+          error: insertError?.message || "Failed to save your complaint.",
+          details: insertError?.details || null,
+          hint: insertError?.hint || null,
+          code: insertError?.code || null,
+        },
+        { status: 500 }
       );
     }
 
@@ -388,9 +403,9 @@ export async function POST(request: NextRequest) {
         });
 
         if (input.category && input.category !== "unknown" && analysis.category === "unknown") {
-          finalCategory = input.category;
+          finalCategory = sanitizeCategory(input.category);
         } else {
-          finalCategory = analysis.category;
+          finalCategory = sanitizeCategory(analysis.category);
         }
         finalPriority = priorityResult.band;
         needsReview = analysis.needsHumanReview;
@@ -435,7 +450,7 @@ export async function POST(request: NextRequest) {
         const { error: updateError } = await supabase
           .from("complaints")
           .update({
-            category: analysis.category,
+            category: sanitizeCategory(analysis.category),
             priority: priorityResult.band,
             status: analysis.needsHumanReview ? "needs_review" : "analyzing",
             department_id: deptId,
