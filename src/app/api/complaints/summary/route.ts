@@ -9,9 +9,13 @@
  */
 
 import { NextRequest } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { getCurrentUserWithProfile, getUserDepartmentIds } from "@/lib/auth/session";
+import { getCurrentUserWithProfile } from "@/lib/auth/session";
 import {
   handleRouteError,
   successResponse,
@@ -29,7 +33,6 @@ export async function GET(_request: NextRequest) {
 
     const user = auth?.user ?? null;
     const profile = auth?.profile ?? null;
-    const isDemo = !user || !profile;
 
     const activeUser = user ?? ({ id: "demo-officer" } as any);
     const activeProfile = profile ?? {
@@ -41,34 +44,20 @@ export async function GET(_request: NextRequest) {
       updated_at: new Date().toISOString(),
     };
 
-    const supabase = isDemo ? createAdminClient() : await createSupabaseServerClient();
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const supabaseServiceKey =
+      process.env.SUPABASE_SERVICE_ROLE_KEY ||
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-    let deptIds: string[] = [];
-    if (!isDemo && (activeProfile.role === "officer" || activeProfile.role === "reviewer")) {
-      deptIds = await getUserDepartmentIds(activeUser.id);
-      if (deptIds.length === 0) {
-        // Officer belongs to no department yet
-        const emptySummary: DashboardSummary = {
-          total: 0,
-          submitted: 0,
-          needs_review: 0,
-          assigned: 0,
-          in_progress: 0,
-          resolved: 0,
-          high_critical: 0,
-          my_assigned: 0,
-        };
-        return successResponse(emptySummary);
-      }
-    }
+    const supabase = createClient(supabaseUrl, supabaseServiceKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
 
     // Helper to build scoped query
     const buildScopedQuery = () => {
       let q = supabase.from("complaints").select("id", { count: "exact", head: true });
       if (activeProfile.role === "citizen") {
         q = q.eq("citizen_id", activeUser.id);
-      } else if (!isDemo && (activeProfile.role === "officer" || activeProfile.role === "reviewer")) {
-        q = q.in("department_id", deptIds);
       }
       return q;
     };

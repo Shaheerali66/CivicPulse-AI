@@ -109,7 +109,10 @@ export default function OfficerDashboardPage() {
   const fetchSummary = useCallback(async () => {
     try {
       setSummaryLoading(true);
-      const res = await fetch("/api/complaints/summary");
+      const res = await fetch("/api/complaints/summary", {
+        cache: "no-store",
+        headers: { "Cache-Control": "no-cache" },
+      });
       if (res.ok) {
         const json = await res.json();
         if (json.success) setSummary(json.data);
@@ -124,7 +127,9 @@ export default function OfficerDashboardPage() {
   // Fetch Departments
   const fetchDepartments = useCallback(async () => {
     try {
-      const res = await fetch("/api/departments");
+      const res = await fetch("/api/departments", {
+        cache: "no-store",
+      });
       if (res.ok) {
         const json = await res.json();
         if (json.success) setDepartments(json.data || []);
@@ -159,7 +164,10 @@ export default function OfficerDashboardPage() {
         params.set("needs_review", "true");
       }
 
-      const res = await fetch(`/api/complaints?${params.toString()}`);
+      const res = await fetch(`/api/complaints?${params.toString()}`, {
+        cache: "no-store",
+        headers: { "Cache-Control": "no-cache" },
+      });
       if (!res.ok) {
         if (res.status === 401) {
           throw new Error("Authentication required. Please sign in.");
@@ -250,8 +258,24 @@ export default function OfficerDashboardPage() {
             </p>
           </div>
 
-          {/* Tab Selector */}
-          <div className="flex items-center bg-white border border-slate-300 rounded-md p-1 shadow-2xs self-start sm:self-auto">
+          {/* Actions & Tab Selector */}
+          <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+            <button
+              type="button"
+              onClick={() => {
+                fetchSummary();
+                fetchComplaints();
+              }}
+              disabled={queueLoading || summaryLoading}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 rounded-md text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:text-slate-900 shadow-2xs transition-colors disabled:opacity-50"
+              title="Refresh complaints queue and metrics"
+            >
+              <RotateCw className={`w-3.5 h-3.5 ${queueLoading || summaryLoading ? "animate-spin text-blue-600" : "text-slate-500"}`} />
+              Refresh
+            </button>
+
+            {/* Tab Selector */}
+            <div className="flex items-center bg-white border border-slate-300 rounded-md p-1 shadow-2xs">
             <button
               type="button"
               onClick={() => {
@@ -309,6 +333,7 @@ export default function OfficerDashboardPage() {
             </button>
           </div>
         </div>
+      </div>
 
         {/* Operational Metrics Cards (Click to Filter) */}
         <MetricsCards

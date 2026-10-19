@@ -156,10 +156,11 @@ export function ComplaintQueue({
               type="button"
               onClick={onRefresh}
               disabled={loading}
-              className="p-1.5 bg-white border border-slate-300 rounded text-slate-600 hover:text-slate-900 hover:bg-slate-50 disabled:opacity-50"
-              title="Refresh queue"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-white border border-slate-300 rounded text-xs font-medium text-slate-700 hover:text-slate-900 hover:bg-slate-50 disabled:opacity-50 transition-colors"
+              title="Refresh complaints queue"
             >
-              <RotateCw className={`w-4 h-4 ${loading ? "animate-spin text-blue-600" : ""}`} />
+              <RotateCw className={`w-3.5 h-3.5 ${loading ? "animate-spin text-blue-600" : ""}`} />
+              Refresh
             </button>
 
             {hasActiveFilters && (

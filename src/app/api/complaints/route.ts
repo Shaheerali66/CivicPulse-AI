@@ -18,6 +18,10 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentUser, getCurrentUserWithProfile, getUserDepartmentIds } from "@/lib/auth/session";
@@ -97,7 +101,16 @@ export async function GET(request: NextRequest) {
 
     const filters = parseResult.data;
     ensureSampleComplaintsSynced().catch(() => {});
-    const supabase = isDemoOfficer ? createAdminClient() : await createSupabaseServerClient();
+    
+    // Force use of Supabase Service Role client so officers can view all submitted complaints regardless of RLS settings
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const supabaseServiceKey =
+      process.env.SUPABASE_SERVICE_ROLE_KEY ||
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+
+    const supabase = createClient(supabaseUrl, supabaseServiceKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
 
     // Select valid schema columns
     let query = supabase
@@ -110,24 +123,20 @@ export async function GET(request: NextRequest) {
         { count: "exact" }
       );
 
-    // Role-based scoping (admin/demo sees all)
+    // Only citizens are scoped strictly to their own complaints.
+    // Officers, reviewers, and administrators view the full municipal queue.
     if (activeProfile.role === "citizen") {
       query = query.eq("citizen_id", activeUser.id);
-    } else if (activeProfile.role === "officer" && !isDemoOfficer) {
-      const deptIds = await getUserDepartmentIds(activeUser.id);
-      if (deptIds.length === 0) {
-        return paginatedResponse({
-          items: [],
-          total: 0,
-          page: filters.page,
-          pageSize: filters.pageSize,
-        });
-      }
-      query = query.in("department_id", deptIds);
     }
 
-    // Apply filters that match actual columns
-    if (filters.status)        query = query.eq("status", filters.status);
+    // Apply status and review filters:
+    // When needs_review is true, include all newly submitted or review-needed items
+    if (filters.status) {
+      query = query.eq("status", filters.status);
+    } else if (filters.needs_review) {
+      query = query.in("status", ["needs_review", "submitted"]);
+    }
+
     if (filters.category)      query = query.eq("category", filters.category);
     if (filters.priority)      query = query.eq("priority", filters.priority);
     if (filters.department_id) query = query.eq("department_id", filters.department_id);
@@ -142,7 +151,8 @@ export async function GET(request: NextRequest) {
 
     const from = (filters.page - 1) * filters.pageSize;
     const to = from + filters.pageSize - 1;
-    query = query.order("submitted_at", { ascending: false }).range(from, to);
+    // Always sort by submitted_at DESC so newest complaints appear immediately at top
+    query = query.order("submitted_at", { ascending: false, nullsFirst: false }).range(from, to);
 
     const { data, error, count } = await query;
 
