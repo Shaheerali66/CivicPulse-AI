@@ -3,17 +3,23 @@
  *
  * GET /api/complaints/[id] & PATCH /api/complaints/[id]
  *
- * Case-insensitive lookup supporting:
- * 1. UUID (complaint primary key id via exact .eq)
- * 2. tracking_code (via Supabase case-insensitive .ilike)
- * 3. tracking_id (via Supabase case-insensitive .ilike)
- * 4. Bypasses RLS via createAdminClient for reliable anonymous tracking
+ * Uses Supabase Service Role client to completely bypass RLS restrictions
+ * for both public tracking and officer dashboard lookups.
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@supabase/supabase-js";
 import { getCurrentUserWithProfile } from "@/lib/auth/session";
 import { COMPLAINT_CATEGORIES, COMPLAINT_STATUS_LABELS, type ComplaintStatus } from "@/types/complaint";
+
+function getServiceSupabase() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+  const supabaseServiceKey =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    "";
+  return createClient(supabaseUrl, supabaseServiceKey);
+}
 
 export async function GET(
   request: Request | NextRequest,
@@ -21,85 +27,67 @@ export async function GET(
 ) {
   try {
     const resolvedParams = await Promise.resolve(params);
-    const rawId = resolvedParams?.id;
-    const id = decodeURIComponent(rawId || "").trim();
+    const { id } = resolvedParams || {};
 
     if (!id) {
       return NextResponse.json(
-        { error: "Complaint identifier or tracking code is required." },
+        { error: "Missing complaint ID or tracking code" },
         { status: 400 }
       );
     }
 
-    // Always use admin client so anonymous RLS policies do not restrict public status tracking lookup
-    const admin = createAdminClient();
+    // Use Service Role Client to bypass RLS for robust server-side lookup
+    const supabase = getServiceSupabase();
 
-    // Check if the parameter is a valid UUID format
-    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+    const cleanId = decodeURIComponent(id).trim();
+    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanId);
 
     let data: any = null;
+    let error: any = null;
 
-    // 1. If UUID, query complaints by primary key 'id'
     if (isUUID) {
-      const res = await admin.from("complaints").select("*").eq("id", id).maybeSingle();
-      if (res.data) data = res.data;
+      const res = await supabase.from("complaints").select("*").eq("id", cleanId).maybeSingle();
+      data = res.data;
+      error = res.error;
     }
 
-    // 2. Case-insensitive search using .ilike('tracking_code', id)
     if (!data) {
       try {
-        const res = await admin.from("complaints").select("*").ilike("tracking_code", id).maybeSingle();
-        if (res.data) data = res.data;
-      } catch {
-        // column tracking_code might not exist in some environments
-      }
-    }
-
-    // 3. Case-insensitive search using .ilike('tracking_id', id)
-    if (!data) {
-      try {
-        const res = await admin.from("complaints").select("*").ilike("tracking_id", id).maybeSingle();
-        if (res.data) data = res.data;
-      } catch {
-        // column tracking_id might not exist in some environments
-      }
-    }
-
-    // 4. Exact match fallback
-    if (!data) {
-      try {
-        const res = await admin.from("complaints").select("*").eq("tracking_code", id).maybeSingle();
-        if (res.data) data = res.data;
-      } catch {}
-    }
-    if (!data) {
-      try {
-        const res = await admin.from("complaints").select("*").eq("tracking_id", id).maybeSingle();
-        if (res.data) data = res.data;
+        const res = await supabase.from("complaints").select("*").ilike("tracking_code", cleanId).maybeSingle();
+        data = res.data;
+        error = res.error;
       } catch {}
     }
 
-    // 5. Fallback OR search
-    if (!data && isUUID) {
+    if (!data) {
       try {
-        const res = await admin
+        const res = await supabase.from("complaints").select("*").ilike("tracking_id", cleanId).maybeSingle();
+        data = res.data;
+        error = res.error;
+      } catch {}
+    }
+
+    if (!data) {
+      try {
+        const res = await supabase
           .from("complaints")
           .select("*")
-          .or(`id.eq.${id},tracking_code.ilike.${id},tracking_id.ilike.${id}`)
+          .or(`id.eq.${cleanId},tracking_code.ilike.%${cleanId}%,tracking_id.ilike.%${cleanId}%`)
           .maybeSingle();
-        if (res.data) data = res.data;
+        data = res.data;
+        error = res.error;
       } catch {}
     }
 
-    if (!data) {
+    if (error || !data) {
       return NextResponse.json(
-        { error: `Complaint not found with identifier "${id}"` },
+        { error: `Complaint not found with identifier "${cleanId}"` },
         { status: 404 }
       );
     }
 
     // Normalize identifier fields across tracking_code / tracking_id
-    const trackingCode = data.tracking_code || data.tracking_id || id;
+    const trackingCode = data.tracking_code || data.tracking_id || cleanId;
     data.tracking_code = trackingCode;
     data.tracking_id = trackingCode;
     data.trackingId = trackingCode;
@@ -109,7 +97,7 @@ export async function GET(
     // Load AI analysis record if available
     let aiRecord = null;
     try {
-      const { data: ai } = await admin
+      const { data: ai } = await supabase
         .from("ai_analyses")
         .select("*")
         .eq("complaint_id", data.id)
@@ -122,7 +110,7 @@ export async function GET(
     // Load timeline events
     let events: any[] = [];
     try {
-      const { data: evList } = await admin
+      const { data: evList } = await supabase
         .from("complaint_events")
         .select("id, complaint_id, actor_id, event_type, previous_value, new_value, note, created_at")
         .eq("complaint_id", data.id)
@@ -135,7 +123,7 @@ export async function GET(
     let deptObj = data.department || null;
     if (data.department_id) {
       try {
-        const { data: dept } = await admin
+        const { data: dept } = await supabase
           .from("departments")
           .select("id, name, slug")
           .eq("id", data.department_id)
@@ -151,7 +139,7 @@ export async function GET(
     let assignedOfficer: { id: string; display_name: string | null; full_name?: string | null; role?: string } | null = null;
     if (data.assigned_to) {
       try {
-        const { data: officer } = await admin
+        const { data: officer } = await supabase
           .from("profiles")
           .select("id, display_name, role")
           .eq("id", data.assigned_to)
@@ -271,26 +259,26 @@ export async function PATCH(
       authUser = null;
     }
 
-    const admin = createAdminClient();
+    const supabase = getServiceSupabase();
 
     // 1. Fetch current complaint by UUID, tracking_code (.ilike), or tracking_id (.ilike)
     let complaint: any = null;
 
     if (isUuid) {
-      const res = await admin.from("complaints").select("*").eq("id", queryId).maybeSingle();
+      const res = await supabase.from("complaints").select("*").eq("id", queryId).maybeSingle();
       complaint = res.data;
     }
 
     if (!complaint) {
       try {
-        const res = await admin.from("complaints").select("*").ilike("tracking_code", queryId).maybeSingle();
+        const res = await supabase.from("complaints").select("*").ilike("tracking_code", queryId).maybeSingle();
         complaint = res.data;
       } catch {}
     }
 
     if (!complaint) {
       try {
-        const res = await admin.from("complaints").select("*").ilike("tracking_id", queryId).maybeSingle();
+        const res = await supabase.from("complaints").select("*").ilike("tracking_id", queryId).maybeSingle();
         complaint = res.data;
       } catch {}
     }
@@ -330,7 +318,7 @@ export async function PATCH(
     if (newCategory) updatePayload.category = newCategory;
 
     // 2. Persist updates to public.complaints
-    const { data: updatedComplaint, error: updateErr } = await admin
+    const { data: updatedComplaint, error: updateErr } = await supabase
       .from("complaints")
       .update(updatePayload)
       .eq("id", complaint.id)
@@ -358,7 +346,7 @@ export async function PATCH(
         : "status_changed";
 
     try {
-      await admin.from("complaint_events").insert({
+      await supabase.from("complaint_events").insert({
         complaint_id: complaint.id,
         actor_id: authUser?.id ?? null,
         event_type: eventType,

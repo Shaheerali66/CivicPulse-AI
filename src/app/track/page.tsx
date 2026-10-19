@@ -44,7 +44,7 @@ function TrackContent() {
     setComplaint(null);
 
     try {
-      const res = await fetch(`/api/complaints/${encodeURIComponent(idToSearch.trim())}`);
+      const res = await fetch(`/api/complaints/${encodeURIComponent(cleanId)}`);
       const data = await res.json();
 
       if (!res.ok) {
